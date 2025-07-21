@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1,
+    "titulo": "Álgebra Lineal - Apuntes Unidad 1",
+    "descripcion": "Resumen completo con ejercicios.",
+    "autor": "Ana López"
+  },
+  {
+    "id": 2,
+    "titulo": "Bases de Datos",
+    "descripcion": "Apuntes de modelos relacionales",
+    "autor": "Pedro Sánchez"
+  }
+]
