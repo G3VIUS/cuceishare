@@ -1,82 +1,53 @@
-import { useState } from 'react';
-
-const apuntesSimulados = [
-  {
-    id: 1,
-    titulo: 'Álgebra Lineal - Unidad 1',
-    descripcion: 'Resumen con fórmulas y ejercicios.',
-    materia: 'Álgebra Lineal',
-    semestre: '1',
-  },
-  {
-    id: 2,
-    titulo: 'Cálculo Diferencial - Derivadas',
-    descripcion: 'Guía completa para derivar funciones.',
-    materia: 'Cálculo Diferencial',
-    semestre: '2',
-  },
-  {
-    id: 3,
-    titulo: 'POO - Clases y Objetos',
-    descripcion: 'Explicación clara con ejemplos en Java.',
-    materia: 'Programación Orientada a Objetos',
-    semestre: '3',
-  },
-];
+import { useState, useEffect } from 'react';
 
 export default function Buscar() {
-  const [materia, setMateria] = useState('');
-  const [semestre, setSemestre] = useState('');
+  const [apuntes, setApuntes] = useState([]);
+  const [filtro, setFiltro] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState(null);
 
-  const filtrados = apuntesSimulados.filter((a) => {
-    return (
-      (materia === '' || a.materia === materia) &&
-      (semestre === '' || a.semestre === semestre)
-    );
-  });
+  useEffect(() => {
+    fetch('http://localhost:3001/apuntes')
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => setApuntes(data))
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, []);
 
-  const materiasUnicas = [...new Set(apuntesSimulados.map(a => a.materia))];
-  const semestresUnicos = [...new Set(apuntesSimulados.map(a => a.semestre))];
+  const resultados = apuntes.filter((a) =>
+    a.titulo.toLowerCase().includes(filtro.toLowerCase()) ||
+    a.autor.toLowerCase().includes(filtro.toLowerCase())
+  );
+
+  if (loading) return <p className="p-4">Cargando…</p>;
+  if (error)   return <p className="p-4 text-red-600">Error: {error}</p>;
 
   return (
-    <div style={{ maxWidth: 800, margin: 'auto', padding: 20 }}>
-      <h2>🔍 Buscar apuntes</h2>
+    <div className="max-w-4xl mx-auto p-6">
+      <h2 className="text-2xl font-bold mb-4">🔍 Buscar apuntes</h2>
+      <input
+        type="text"
+        placeholder="Busca por título o autor..."
+        value={filtro}
+        onChange={(e) => setFiltro(e.target.value)}
+        className="w-full border border-gray-300 rounded-md p-2 mb-6"
+      />
 
-      <div style={{ marginBottom: 20 }}>
-        <label><strong>Filtrar por materia:</strong> </label>
-        <select value={materia} onChange={(e) => setMateria(e.target.value)}>
-          <option value="">Todas</option>
-          {materiasUnicas.map((m, idx) => (
-            <option key={idx} value={m}>{m}</option>
-          ))}
-        </select>
-
-        <label style={{ marginLeft: 20 }}><strong>Filtrar por semestre:</strong> </label>
-        <select value={semestre} onChange={(e) => setSemestre(e.target.value)}>
-          <option value="">Todos</option>
-          {semestresUnicos.map((s, idx) => (
-            <option key={idx} value={s}>{s}</option>
-          ))}
-        </select>
-      </div>
-
-      {filtrados.length === 0 ? (
-        <p>No se encontraron apuntes con esos filtros.</p>
-      ) : (
-        filtrados.map((apunte) => (
-          <div key={apunte.id} style={{
-            background: '#f3f3f3',
-            padding: 15,
-            marginBottom: 15,
-            borderRadius: 8,
-            boxShadow: '0 1px 4px rgba(0,0,0,0.1)'
-          }}>
-            <h4>{apunte.titulo}</h4>
-            <p><strong>Descripción:</strong> {apunte.descripcion}</p>
-            <p><strong>Materia:</strong> {apunte.materia}</p>
-            <p><strong>Semestre:</strong> {apunte.semestre}</p>
+      {resultados.length > 0 ? (
+        resultados.map((a) => (
+          <div
+            key={a.id}
+            className="bg-white p-4 rounded-md shadow mb-4"
+          >
+            <h3 className="font-semibold text-lg">{a.titulo}</h3>
+            <p className="text-sm text-gray-600">Autor: {a.autor}</p>
           </div>
         ))
+      ) : (
+        <p className="text-gray-500">No se encontraron apuntes.</p>
       )}
     </div>
   );

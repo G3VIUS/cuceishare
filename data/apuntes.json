@@ -10,5 +10,11 @@
     "titulo": "Bases de Datos",
     "descripcion": "Apuntes de modelos relacionales",
     "autor": "Pedro Sánchez"
+  },
+  {
+    "id": 3,
+    "titulo": "Prueba Postgres",
+    "descripcion": "Conectando Express → Supabase",
+    "autor": "Tu Nombre"
   }
 ]
