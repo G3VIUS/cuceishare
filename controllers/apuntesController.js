@@ -1,96 +1,65 @@
 // controllers/apuntesController.js
+const { pool } = require('../db');
 
-const pool = require('../db');
-
-// GET /apuntes — devuelve todos los apuntes
-const getApuntes = async (req, res) => {
+async function getApuntes(req, res) {
   try {
     const { rows } = await pool.query(
-      'SELECT id, titulo, descripcion, autor FROM public.apuntes ORDER BY id'
+      `select id, titulo, descripcion, autor, creado_en
+         from apuntes
+        order by creado_en desc`
     );
     res.json(rows);
-  } catch (error) {
-    console.error('Error al leer apuntes:', error);
-    res.status(500).json({ error: 'Error interno al leer apuntes' });
+  } catch (e) {
+    console.error('Error al leer apuntes:', e);
+    res.status(500).json({ error: 'No se pudieron leer los apuntes' });
   }
-};
+}
 
-// GET /apuntes/:id — devuelve un apunte por su ID
-const getApunteById = async (req, res) => {
-  const { id } = req.params;
+async function getApunte(req, res) {
   try {
+    const { id } = req.params;
     const { rows } = await pool.query(
-      'SELECT id, titulo, descripcion, autor FROM public.apuntes WHERE id = $1',
+      `select id, titulo, descripcion, autor, creado_en
+         from apuntes
+        where id = $1`,
       [id]
     );
-    if (rows.length === 0) {
-      return res.status(404).json({ error: 'Apunte no encontrado' });
-    }
+    if (!rows.length) return res.status(404).json({ error: 'Apunte no encontrado' });
     res.json(rows[0]);
-  } catch (error) {
-    console.error('Error al leer apunte:', error);
-    res.status(500).json({ error: 'Error interno al leer apunte' });
+  } catch (e) {
+    console.error('Error al leer apunte:', e);
+    res.status(500).json({ error: 'No se pudo leer el apunte' });
   }
-};
+}
 
-// POST /apuntes — crea un nuevo apunte
-const addApunte = async (req, res) => {
-  const { titulo, descripcion, autor } = req.body;
-  if (!titulo || !descripcion || !autor) {
-    return res.status(400).json({ error: 'Todos los campos son obligatorios' });
-  }
-
+async function crearApunte(req, res) {
   try {
+    const { titulo, descripcion, autor } = req.body;
+    if (!titulo) return res.status(400).json({ error: 'titulo es requerido' });
+
     const { rows } = await pool.query(
-      `INSERT INTO public.apuntes (titulo, descripcion, autor)
-       VALUES ($1, $2, $3)
-       RETURNING id, titulo, descripcion, autor`,
-      [titulo, descripcion, autor]
+      `insert into apuntes (titulo, descripcion, autor, creado_en)
+       values ($1, $2, $3, now())
+       returning id, titulo, descripcion, autor, creado_en`,
+      [titulo, descripcion || null, autor || null]
     );
     res.status(201).json(rows[0]);
-  } catch (error) {
-    console.error('Error al guardar apunte:', error);
-    res.status(500).json({ error: 'Error interno al guardar apunte' });
+  } catch (e) {
+    console.error('Error al crear apunte:', e);
+    res.status(500).json({ error: 'No se pudo crear el apunte' });
   }
-};
+}
 
-// DELETE /apuntes/:id — elimina un apunte si el header x-user coincide con el autor
-const deleteApunte = async (req, res) => {
-  const { id } = req.params;
-  const usuario = req.header('x-user');
-
-  if (!usuario) {
-    return res.status(401).json({ error: 'No autenticado' });
-  }
-
+async function borrarApunte(req, res) {
   try {
-    // 1) Obtener autor del apunte
-    const { rows } = await pool.query(
-      'SELECT autor FROM public.apuntes WHERE id = $1',
-      [id]
-    );
-    if (rows.length === 0) {
-      return res.status(404).json({ error: 'Apunte no encontrado' });
-    }
-    const { autor } = rows[0];
-
-    // 2) Verificar permisos
-    if (autor !== usuario) {
-      return res.status(403).json({ error: 'No tienes permiso para borrar este apunte' });
-    }
-
-    // 3) Ejecutar borrado
-    await pool.query('DELETE FROM public.apuntes WHERE id = $1', [id]);
-    res.json({ message: 'Apunte eliminado' });
-  } catch (error) {
-    console.error('Error al borrar apunte:', error);
-    res.status(500).json({ error: 'Error interno al borrar apunte' });
+    const { id } = req.params;
+    const { rowCount } = await pool.query(`delete from apuntes where id=$1`, [id]);
+    if (!rowCount) return res.status(404).json({ error: 'Apunte no encontrado' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Error al borrar apunte:', e);
+    res.status(500).json({ error: 'No se pudo borrar el apunte' });
   }
-};
+}
 
-module.exports = {
-  getApuntes,
-  getApunteById,
-  addApunte,
-  deleteApunte,
-};
+module.exports = { getApuntes, getApunte, crearApunte, borrarApunte };

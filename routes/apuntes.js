@@ -1,15 +1,10 @@
-const express = require('express');
-const router = express.Router();
-const {
-  getApuntes,
-  getApunteById,
-  addApunte,
-  deleteApunte    // importa el nuevo handler
-} = require('../controllers/apuntesController');
+// routes/apuntes.js
+const router = require('express').Router();
+const { getApuntes, getApunte, crearApunte, borrarApunte } = require('../controllers/apuntesController');
 
 router.get('/', getApuntes);
-router.get('/:id', getApunteById);
-router.post('/', addApunte);
-router.delete('/:id', deleteApunte);   // registra la ruta DELETE
+router.get('/:id', getApunte);
+router.post('/', crearApunte);
+router.delete('/:id', borrarApunte);
 
 module.exports = router;
