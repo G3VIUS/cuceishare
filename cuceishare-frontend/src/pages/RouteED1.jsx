@@ -1,176 +1,181 @@
-// src/pages/RouteED1.jsx
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import api, { API_BASE } from '../lib/api';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 
+const API = process.env.REACT_APP_API_URL || 'http://localhost:3001';
 const cx = (...xs) => xs.filter(Boolean).join(' ');
 const Icon = ({ children, className='' }) => (
   <span className={cx('inline-grid place-items-center rounded-lg', className)}>{children}</span>
 );
-const Skeleton = ({ className='' }) => (
-  <div className={cx('animate-pulse bg-gray-200/70 rounded', className)} />
-);
+const Skeleton = ({ className='' }) => <div className={cx('animate-pulse bg-gray-200/70 rounded', className)} />;
 
-export default function RouteED1() {
+export default function PreEvalED1() {
   const navigate = useNavigate();
 
-  // Sesión (memo una vez)
+  // Session (memo para evitar renders infinitos)
   const user = useMemo(() => {
     try { return JSON.parse(localStorage.getItem('usuario') || 'null'); } catch { return null; }
   }, []);
   const token = useMemo(() => localStorage.getItem('token') || '', []);
   const userId = user?.id ?? null;
 
-  useEffect(() => {
-    if (!user || !token) navigate('/login', { replace: true });
-  }, [userId, token, navigate]);
+  // Draft key por usuario
+  const key = (k) => `ed1:${k}:${user?.id ?? 'anon'}`;
+  const DRAFT_KEY = key('preeval:draft');
 
-  // Estado de datos
-  const [loadingTotals, setLoadingTotals] = useState(true);
-  const [loadingSummary, setLoadingSummary] = useState(true);
-  const [loadingBlocks, setLoadingBlocks] = useState(true);
+  // Estado principal
+  const [blocks, setBlocks] = useState([]);
+  const [questions, setQuestions] = useState([]);
+  const [choices, setChoices] = useState([]);
+  const [openKeys, setOpenKeys] = useState([]);
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [ok, setOk] = useState('');
-  const [totals, setTotals] = useState(null);
-  const [summary, setSummary] = useState(null);
+  const [info, setInfo] = useState('');
 
-  // Metadata de bloques (para mostrar nombres amigables)
-  const [blockMeta, setBlockMeta] = useState([]); // [{id, titulo}, ...]
-  const blockMetaById = useMemo(() => {
-    const m = new Map();
-    blockMeta.forEach((b, idx) => m.set(String(b.id), { ...b, order: idx + 1 }));
+  const [selectedChoice, setSelectedChoice] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}').choices || {}; } catch { return {}; }
+  });
+  const [openAnswers, setOpenAnswers] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}').opens || {}; } catch { return {}; }
+  });
+  const [draftState, setDraftState] = useState('saved');
+  const [collapsed, setCollapsed] = useState({});
+  const topRef = useRef(null);
+
+  // Redirect si no hay sesión
+  useEffect(() => {
+    if (!user || !token) navigate('/login', { replace: true });
+  }, [user, token, navigate]);
+
+  // Carga banco de preguntas
+  useEffect(() => {
+    let alive = true;
+    if (!user || !token) return;
+    (async () => {
+      setLoading(true); setError('');
+      try {
+        const { data } = await axios.get(`${API}/api/ed1/pre-eval`, {
+          headers: { Authorization: `Bearer ${token}` },
+          params: { _t: Date.now() },
+        });
+        if (!alive) return;
+        setBlocks(data?.blocks || []);
+        setQuestions(data?.questions || []);
+        setChoices(data?.choices || []);
+        setOpenKeys(data?.openKeys || []);
+        const draft = localStorage.getItem(DRAFT_KEY);
+        if (draft) setInfo('Se restauró tu borrador automáticamente.');
+      } catch (e) {
+        if (!alive) return;
+        if (e?.response?.status === 401) { navigate('/login', { replace: true }); return; }
+        setError(e?.response?.data?.error || 'No se pudo cargar la pre-evaluación');
+      } finally { if (alive) setLoading(false); }
+    })();
+    return () => { alive = false; };
+  }, [user, token, navigate, DRAFT_KEY]);
+
+  // Guardado de borrador
+  useEffect(() => {
+    setDraftState('saving');
+    const h = setTimeout(() => {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ choices: selectedChoice, opens: openAnswers }));
+      setDraftState('saved');
+    }, 300);
+    return () => clearTimeout(h);
+  }, [selectedChoice, openAnswers, DRAFT_KEY]);
+
+  // Índices
+  const choicesByQ = useMemo(() => {
+    const m = {}; for (const c of choices) (m[c.question_id] ||= []).push(c); return m;
+  }, [choices]);
+  const openKeysByQ = useMemo(() => {
+    const m = {}; for (const k of openKeys) (m[k.question_id] ||= []).push(k); return m;
+  }, [openKeys]);
+  const questionsByBlock = useMemo(() => {
+    const m = {}; for (const q of questions) (m[q.block_id] ||= []).push(q);
+    for (const k of Object.keys(m)) m[k].sort((a, b) => String(a.id).localeCompare(String(b.id)));
     return m;
-  }, [blockMeta]);
+  }, [questions]);
 
-  // UI: filtros/orden
-  const [priorityFilter, setPriorityFilter] = useState('all'); // all|alta|media|baja
-  const [sortBy, setSortBy] = useState('need'); // need|score
-  const [reloadKey, setReloadKey] = useState(0);
+  // Progreso
+  const totalPreguntas = questions.length;
+  const respondidas = useMemo(() => {
+    let c = 0; for (const q of questions) {
+      if (q.tipo === 'opcion' && selectedChoice[q.id]) c++;
+      if (q.tipo === 'abierta' && (openAnswers[q.id] || '').trim()) c++;
+    } return c;
+  }, [questions, selectedChoice, openAnswers]);
+  const progresoPct = totalPreguntas ? Math.round((respondidas / totalPreguntas) * 100) : 0;
 
-  // 1) Obtener totales
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      setLoadingTotals(true); setError('');
-      try {
-        await api.get('/healthz');
-        const { data } = await api.get('/api/ed1/results/me', {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (!alive) return;
-        setTotals(data?.totals || { total: 0, correct: 0, pct: 0 });
-      } catch (e) {
-        if (!alive) return;
-        const msg = e?.response?.data?.error ||
-          (e?.response ? `HTTP ${e.response.status} al obtener resultados` :
-           e?.message?.includes('Network') ? `No se pudo conectar a ${API_BASE}` :
-           e?.message || 'No se pudieron obtener resultados');
-        setError(msg);
-        setTotals(null);
-      } finally { if (alive) setLoadingTotals(false); }
-    })();
-    return () => { alive = false; };
-  }, [token, reloadKey]);
+  const blockProgress = useMemo(() => {
+    const res = {};
+    for (const b of blocks) {
+      const qs = questionsByBlock[b.id] || []; let done = 0;
+      for (const q of qs) {
+        if (q.tipo === 'opcion' && selectedChoice[q.id]) done++;
+        if (q.tipo === 'abierta' && (openAnswers[q.id] || '').trim()) done++;
+      }
+      res[b.id] = { done, total: qs.length, pct: qs.length ? Math.round((done / qs.length) * 100) : 0 };
+    } return res;
+  }, [blocks, questionsByBlock, selectedChoice, openAnswers]);
 
-  // 2) Obtener resumen de ruta
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      setLoadingSummary(true);
-      try {
-        const { data } = await api.get('/api/ed1/route/summary', {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (!alive) return;
-        setSummary(data);
-        setOk('Resumen actualizado');
-        setTimeout(() => setOk(''), 1200);
-      } catch (e) {
-        if (!alive) return;
-        setError(prev => prev || e?.response?.data?.error || e?.message || 'No se pudo obtener el resumen de ruta');
-      } finally { if (alive) setLoadingSummary(false); }
-    })();
-    return () => { alive = false; };
-  }, [token, reloadKey]);
-
-  // 3) Obtener metadata de bloques para nombres (reutilizamos la del endpoint de pre-eval)
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      setLoadingBlocks(true);
-      try {
-        const { data } = await api.get('/api/ed1/pre-eval', {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (!alive) return;
-        // data.blocks => [{ id, titulo }, ...]
-        setBlockMeta(Array.isArray(data?.blocks) ? data.blocks : []);
-      } catch (e) {
-        if (!alive) return;
-        // No es crítico, solo caeremos en fallback de nombres
-        console.warn('No se pudo cargar metadata de bloques:', e?.message || e);
-      } finally { if (alive) setLoadingBlocks(false); }
-    })();
-    return () => { alive = false; };
-  }, [token]);
-
-  // Normaliza bloques con prioridad y NOMBRES AMIGABLES
-  const rawBlocks = useMemo(() => {
-    const rows = summary?.blocks || [];
-    return rows.map((r, idx) => {
-      const totalO = Number(r.total_option || 0);
-      const correctO = Number(r.correct_option || 0);
-      const total = totalO;
-      const pct = total ? Math.round((correctO / total) * 100) : 0;
-      let prioridad = 'media';
-      if (pct >= 80) prioridad = 'baja';
-      else if (pct < 50) prioridad = 'alta';
-
-      const id = String(r.block_id ?? '');
-      const meta = blockMetaById.get(id);
-      // Prioridad para nombres: meta.titulo > r.title > r.titulo > "Bloque N"
-      const displayName =
-        meta?.titulo?.trim() ||
-        (r.title && String(r.title).trim()) ||
-        (r.titulo && String(r.titulo).trim()) ||
-        `Bloque ${meta?.order ?? (idx + 1)}`;
-
-      return {
-        block_id: id,
-        titulo: displayName,
-        total,
-        correct: correctO,
-        pct,
-        prioridad,
-        order: meta?.order ?? (idx + 1)
-      };
-    });
-  }, [summary, blockMetaById]);
-
-  // Aplicar filtros/orden
-  const blocks = useMemo(() => {
-    let list = rawBlocks;
-    if (priorityFilter !== 'all') list = list.filter(b => b.prioridad === priorityFilter);
-    if (sortBy === 'need') {
-      list = [...list].sort((a,b) => a.pct - b.pct || a.order - b.order);
-    } else {
-      list = [...list].sort((a,b) => b.pct - a.pct || a.order - b.order);
+  // Guardar (useCallback para deps estables)
+  const handleSubmit = useCallback(async () => {
+    setOk(''); setError('');
+    if (!user || !token) { navigate('/login', { replace: true }); return; }
+    const respuestas = [];
+    for (const q of questions) {
+      if (q.tipo === 'opcion') {
+        const ch = selectedChoice[q.id];
+        if (ch) respuestas.push({ blockId: q.block_id, questionId: q.id, type: 'opcion', choiceId: ch });
+      } else {
+        const txt = (openAnswers[q.id] || '').trim();
+        if (txt) respuestas.push({ blockId: q.block_id, questionId: q.id, type: 'abierta', answerText: txt });
+      }
     }
-    return list;
-  }, [rawBlocks, priorityFilter, sortBy]);
+    if (!respuestas.length) { setError('No has respondido ninguna pregunta.'); return; }
+    try {
+      setSaving(true);
+      await axios.post(`${API}/api/ed1/attempts`, { subjectSlug: 'ed1', respuestas }, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setOk('¡Respuestas guardadas!');
+      setTimeout(() => setOk(''), 2000);
+      topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) {
+      if (e?.response?.status === 401) { navigate('/login', { replace: true }); return; }
+      setError(e?.response?.data?.error || 'No se pudo guardar la pre-evaluación');
+      setTimeout(() => setError(''), 3000);
+    } finally { setSaving(false); }
+  }, [user, token, questions, selectedChoice, openAnswers, navigate]);
 
-  // Helpers UI
-  const pctBar = (p) =>
-    cx('h-2 rounded', p >= 80 ? 'bg-emerald-600' : p >= 50 ? 'bg-amber-500' : 'bg-rose-600');
+  // Atajo de teclado (depende de handleSubmit)
+  const onKey = useCallback((e) => {
+    const mac = navigator.platform.toUpperCase().includes('MAC');
+    if ((mac && e.metaKey && e.key.toLowerCase() === 's') || (!mac && e.ctrlKey && e.key.toLowerCase() === 's')) {
+      e.preventDefault(); handleSubmit();
+    }
+  }, [handleSubmit]); 
+  useEffect(() => {
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onKey]);
+
+  // Helper UI
+  const shortId = (id) => String(id).slice(-4).padStart(4, '0');
+
+  if (!user || !token) return <div className="p-6 text-center">Redirigiendo…</div>;
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100">
+    <div ref={topRef} className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100">
       {/* App Bar */}
       <header className="sticky top-0 z-40 border-b bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/60">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
-          {/* Breadcrumb + título */}
           <div className="flex items-center gap-3 min-w-0">
-            <Icon className="h-9 w-9 bg-emerald-600/10 text-emerald-700">📈</Icon>
+            <Icon className="h-9 w-9 bg-indigo-600/10 text-indigo-700">📝</Icon>
             <div className="truncate">
               <nav className="text-xs text-slate-500 truncate" aria-label="Breadcrumb">
                 <ol className="flex items-center gap-1">
@@ -178,38 +183,44 @@ export default function RouteED1() {
                   <li className="text-slate-400">/</li>
                   <li className="hover:text-slate-700 cursor-default">ED I</li>
                   <li className="text-slate-400">/</li>
-                  <li className="text-slate-700 font-medium truncate">Mi ruta</li>
+                  <li className="text-slate-700 font-medium truncate">Pre-evaluación</li>
                 </ol>
               </nav>
               <h1 className="text-lg md:text-xl font-bold tracking-tight text-slate-900">
-                Ruta — <span className="text-indigo-700">Estructuras de Datos I</span>
+                Pre-evaluación — <span className="text-indigo-700">Estructuras de Datos I</span>
               </h1>
-              <p className="text-[11px] text-slate-500">
-                Usuario: <span className="font-mono">#{user?.id ?? '—'}</span> • API: <span className="font-mono">{API_BASE}</span>
-              </p>
+              <p className="text-[11px] text-slate-500">Usuario: <span className="font-mono">#{user.id}</span></p>
             </div>
           </div>
 
-          {/* Acciones */}
+          {/* Progreso + acciones */}
           <div className="hidden md:flex items-center gap-3">
+            <div className="w-48">
+              <div className="flex items-center justify-between text-[11px] text-slate-500 mb-1">
+                <span>{respondidas}/{totalPreguntas}</span>
+                <span>{progresoPct}%</span>
+              </div>
+              <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
+                <div
+                  className="h-2 rounded-full bg-indigo-600 transition-[width] duration-500"
+                  style={{ width: `${progresoPct}%` }}
+                  aria-label={`Progreso ${progresoPct}%`}
+                />
+              </div>
+            </div>
             <button
-              onClick={() => navigate('/ed1/pre')}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm shadow-sm"
-            >
-              📝 Pre-evaluación
-            </button>
-            <Link
-              to="/buscar"
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-sm shadow-sm"
-            >
-              🔎 Apuntes
-            </Link>
-            <button
-              onClick={() => setReloadKey(k => k + 1)}
+              onClick={() => navigate('/ruta/ed1')}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm shadow-sm"
-              title="Refrescar"
             >
-              🔁 Refrescar
+              📈 Ver mi ruta
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={saving}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-sm shadow-sm"
+              title="Ctrl/Cmd + S"
+            >
+              💾 {saving ? 'Guardando…' : 'Guardar'}
             </button>
           </div>
         </div>
@@ -227,175 +238,230 @@ export default function RouteED1() {
             ⚠️ {error}
           </div>
         )}
+        {info && (
+          <div className="max-w-md w-full rounded-xl border bg-sky-50 text-sky-800 px-3 py-2 shadow">
+            💡 {info}
+          </div>
+        )}
       </div>
 
       {/* Contenido */}
-      <main className="max-w-7xl mx-auto px-6 py-8 space-y-8">
-        {/* KPIs */}
-        <section className="grid md:grid-cols-3 gap-4">
-          <div className="bg-white rounded-2xl border shadow-sm p-5">
-            <div className="text-sm text-slate-500">Preguntas</div>
-            <div className="mt-1 text-3xl font-extrabold">
-              {loadingTotals ? '—' : totals ? `${totals.total}` : '0'}
-            </div>
-          </div>
-          <div className="bg-white rounded-2xl border shadow-sm p-5">
-            <div className="text-sm text-slate-500">Correctas</div>
-            <div className="mt-1 text-3xl font-extrabold">
-              {loadingTotals ? '—' : totals ? `${totals.correct}` : '0'}
-            </div>
-          </div>
-          <div className="bg-white rounded-2xl border shadow-sm p-5">
-            <div className="text-sm text-slate-500">Porcentaje</div>
-            <div className="mt-3">
-              <div className="h-2 bg-slate-200 rounded overflow-hidden">
-                <div
-                  className="h-2 rounded bg-indigo-600 transition-[width] duration-500"
-                  style={{ width: `${loadingTotals || !totals ? 0 : totals.pct}%` }}
-                  aria-label={`Porcentaje ${totals?.pct ?? 0}%`}
-                />
-              </div>
-              <div className="mt-1 text-3xl font-extrabold">
-                {loadingTotals ? '—' : totals ? `${totals.pct}%` : '0%'}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Aviso si no hay totales */}
-        {!loadingTotals && !totals && (
-          <div className="p-4 rounded-xl bg-amber-50 border text-amber-900">
-            Aún no hay resultados. Realiza primero la{' '}
-            <button onClick={() => navigate('/ed1/pre')} className="underline">pre-evaluación</button>.
-          </div>
-        )}
-
-        {/* Controles */}
-        <section className="bg-white rounded-2xl border shadow-sm p-4 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-slate-600">Filtrar:</span>
-            <select
-              value={priorityFilter}
-              onChange={(e) => setPriorityFilter(e.target.value)}
-              className="text-sm rounded-lg border px-2 py-1 bg-white"
-              aria-label="Filtrar por prioridad"
+      <main className="max-w-7xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
+        {/* Columna principal */}
+        <div>
+          {/* Barra de herramientas */}
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => {
+                const next = {}; blocks.forEach(b => { next[b.id] = false; }); setCollapsed(next);
+              }}
+              className="px-3 py-1.5 rounded-full border bg-white hover:bg-slate-50 text-slate-700"
             >
-              <option value="all">Todas</option>
-              <option value="alta">Alta prioridad</option>
-              <option value="media">Media</option>
-              <option value="baja">Baja</option>
-            </select>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-slate-600">Ordenar:</span>
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="text-sm rounded-lg border px-2 py-1 bg-white"
-              aria-label="Ordenar por"
+              Expandir todo
+            </button>
+            <button
+              onClick={() => {
+                const next = {}; blocks.forEach(b => { next[b.id] = true; }); setCollapsed(next);
+              }}
+              className="px-3 py-1.5 rounded-full border bg-white hover:bg-slate-50 text-slate-700"
             >
-              <option value="need">Necesidad (peor → mejor)</option>
-              <option value="score">Puntaje (mejor → peor)</option>
-            </select>
-          </div>
-        </section>
-
-        {/* Bloques prioritarios */}
-        <section className="space-y-4">
-          <h2 className="text-xl font-bold">Bloques prioritarios</h2>
-
-          {loadingSummary || loadingBlocks ? (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="bg-white rounded-2xl border p-5">
-                  <Skeleton className="h-5 w-40 mb-3" />
-                  <Skeleton className="h-2 w-full mb-2" />
-                  <Skeleton className="h-2 w-4/5 mb-2" />
-                  <Skeleton className="h-2 w-3/5" />
-                </div>
-              ))}
+              Contraer todo
+            </button>
+            <div className="ml-auto flex items-center gap-3 text-xs">
+              <kbd className="px-2 py-1 rounded bg-slate-100 text-slate-700 border">Ctrl/Cmd + S</kbd>
+              <span className={cx(
+                'px-2 py-1 rounded',
+                draftState === 'saving' ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-800'
+              )}>
+                {draftState === 'saving' ? 'Guardando borrador…' : 'Borrador guardado ✓'}
+              </span>
             </div>
-          ) : !(summary?.blocks?.length) ? (
+          </div>
+
+          {/* Estados */}
+          {loading ? (
+            <div className="space-y-4">
+              <Skeleton className="h-8 w-64" />
+              <div className="grid md:grid-cols-2 gap-4">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="p-5 bg-white rounded-2xl shadow border">
+                    <Skeleton className="h-5 w-40 mb-3" />
+                    <Skeleton className="h-4 w-full mb-2" />
+                    <Skeleton className="h-4 w-4/5 mb-2" />
+                    <Skeleton className="h-4 w-3/5" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : error ? (
+            <div className="p-4 rounded-xl bg-rose-50 border text-rose-700">{error}</div>
+          ) : !blocks.length ? (
             <div className="p-6 rounded-2xl border bg-white shadow-sm text-center">
-              <div className="text-4xl mb-2">🧭</div>
-              <h3 className="font-bold text-lg">Sin información de ruta</h3>
-              <p className="text-slate-600 text-sm">Aún no tenemos datos para recomendarte por bloque.</p>
-            </div>
-          ) : blocks.length === 0 ? (
-            <div className="p-4 rounded-xl bg-slate-50 border text-slate-700">
-              No hay bloques que coincidan con el filtro seleccionado.
+              <div className="text-4xl mb-2">🧩</div>
+              <h2 className="font-bold text-lg">Sin bloques configurados</h2>
+              <p className="text-slate-600 text-sm">Aún no hay preguntas disponibles para esta pre-evaluación.</p>
             </div>
           ) : (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {blocks.map((b) => (
-                <div
-                  key={b.block_id}
-                  className="bg-white rounded-2xl border shadow-sm p-5 flex flex-col gap-3 hover:shadow transition-shadow"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3 className="font-semibold truncate">{b.titulo}</h3>
-                      <p className="text-xs text-slate-500">Bloque {b.order}</p>
+            <div className="space-y-6">
+              {blocks.map((b, bIndex) => {
+                const bp = blockProgress[b.id] || { done: 0, total: 0, pct: 0 };
+                const isCol = !!collapsed[b.id];
+                const qs = questionsByBlock[b.id] || [];
+                return (
+                  <section
+                    key={b.id}
+                    className="bg-white rounded-2xl shadow-sm border overflow-hidden transition-all"
+                    aria-label={`Bloque ${b.titulo}`}
+                  >
+                    {/* Header de bloque */}
+                    <div className="px-5 py-4 flex items-center gap-3">
+                      <button
+                        onClick={() => setCollapsed(p => ({ ...p, [b.id]: !p[b.id] }))}
+                        className="shrink-0 h-8 w-8 grid place-items-center rounded-lg bg-slate-100 hover:bg-slate-200"
+                        aria-expanded={!isCol}
+                        aria-controls={`block-${b.id}`}
+                        title={isCol ? 'Expandir bloque' : 'Contraer bloque'}
+                      >
+                        {isCol ? '⤢' : '⤡'}
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="inline-flex items-center justify-center h-6 px-2 rounded-full bg-indigo-50 text-indigo-700 text-xs font-semibold">
+                            Bloque {bIndex + 1}
+                          </span>
+                          <h2 className="text-lg md:text-xl font-bold truncate">{b.titulo}</h2>
+                        </div>
+                        <div className="mt-2">
+                          <div className="h-2 bg-slate-200 rounded">
+                            <div className="h-2 rounded bg-indigo-600 transition-[width] duration-500" style={{ width: `${bp.pct}%` }} />
+                          </div>
+                          <div className="text-[11px] text-slate-500 mt-1">{bp.done}/{bp.total} ({bp.pct}%)</div>
+                        </div>
+                      </div>
                     </div>
-                    <span
-                      className={cx(
-                        'px-2 py-1 rounded text-xs font-semibold shrink-0 capitalize',
-                        b.prioridad === 'alta'
-                          ? 'bg-rose-100 text-rose-800'
-                          : b.prioridad === 'baja'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : 'bg-amber-100 text-amber-900'
-                      )}
-                      title={`Prioridad ${b.prioridad}`}
-                    >
-                      {b.prioridad}
-                    </span>
-                  </div>
 
-                  <div>
-                    <div className="h-2 bg-slate-200 rounded">
-                      <div className={pctBar(b.pct)} style={{ width: `${b.pct}%` }} />
-                    </div>
-                    <div className="mt-1 flex items-center justify-between">
-                      <span className="text-sm font-bold">{b.pct}%</span>
-                      <span className="text-sm text-slate-500">{b.correct}/{b.total}</span>
-                    </div>
-                  </div>
+                    {/* Contenido de bloque */}
+                    {!isCol && (
+                      <div id={`block-${b.id}`} className="px-5 pb-5 space-y-5">
+                        {qs.map((q, idx) => (
+                          <article key={q.id} className="border rounded-xl p-4 hover:shadow-sm transition-shadow focus-within:ring-1 focus-within:ring-indigo-200">
+                            <div className="mb-3 flex items-start gap-3">
+                              <Icon className="h-7 w-7 bg-indigo-50 text-indigo-700 text-xs">{idx + 1}</Icon>
+                              <h3 className="font-medium leading-6">{q.enunciado}</h3>
+                              <span className="ml-auto text-[11px] text-slate-400">ID …{shortId(q.id)}</span>
+                            </div>
 
-                  <div className="pt-2 flex items-center gap-2">
-                    <Link
-                      to="/buscar"
-                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-white hover:bg-slate-50 text-sm text-slate-700"
-                      title="Buscar apuntes relacionados"
-                    >
-                      📚 Apuntes
-                    </Link>
-                    <button
-                      onClick={() => navigate('/ed1/pre')}
-                      className="ml-auto inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm"
-                      title="Practicar más"
-                    >
-                      🧠 Practicar
-                    </button>
-                  </div>
-                </div>
-              ))}
+                            {q.tipo === 'opcion' ? (
+                              <fieldset className="ml-10 space-y-2" aria-label={`Opciones de la pregunta ${idx + 1}`}>
+                                {(choicesByQ[q.id] || []).map(c => {
+                                  const checked = String(selectedChoice[q.id] || '') === String(c.id);
+                                  return (
+                                    <label
+                                      key={c.id}
+                                      className={cx(
+                                        'flex items-start gap-2 cursor-pointer rounded-lg border p-2 hover:bg-slate-50 focus-within:ring-2 focus-within:ring-indigo-300',
+                                        checked ? 'border-indigo-300 bg-indigo-50/40' : 'border-slate-200'
+                                      )}
+                                    >
+                                      <input
+                                        type="radio"
+                                        className="mt-1 accent-indigo-600"
+                                        name={`q_${q.id}`}
+                                        value={c.id}
+                                        checked={checked}
+                                        onChange={() => { setSelectedChoice(p => ({ ...p, [q.id]: c.id })); setOk(''); setError(''); }}
+                                        aria-checked={checked}
+                                        aria-label={c.texto}
+                                      />
+                                      <span>{c.texto}</span>
+                                    </label>
+                                  );
+                                })}
+                              </fieldset>
+                            ) : (
+                              <div className="ml-10">
+                                <textarea
+                                  className="w-full border rounded-lg p-3 focus:ring-2 focus:ring-indigo-300"
+                                  rows={3}
+                                  placeholder="Escribe tu respuesta…"
+                                  value={openAnswers[q.id] || ''}
+                                  onChange={(e) => { setOpenAnswers(p => ({ ...p, [q.id]: e.target.value })); setOk(''); setError(''); }}
+                                  aria-label={`Respuesta abierta de la pregunta ${idx + 1}`}
+                                />
+                                {openKeysByQ[q.id]?.length ? (
+                                  <p className="text-xs text-slate-500 mt-1">
+                                    Pistas: {openKeysByQ[q.id].map(k => k.palabra).join(', ')}
+                                  </p>
+                                ) : null}
+                              </div>
+                            )}
+                          </article>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
             </div>
           )}
-        </section>
+        </div>
+
+        {/* Sidebar */}
+        <aside className="lg:sticky lg:top-[64px] h-max space-y-4">
+          <div className="rounded-2xl border bg-white shadow-sm p-4">
+            <h3 className="font-bold mb-1">Progreso</h3>
+            <p className="text-xs text-slate-500 mb-2">Responde todo lo que puedas — puedes volver luego.</p>
+            <div className="mb-2">
+              <div className="flex items-center justify-between text-[11px] text-slate-500 mb-1">
+                <span>{respondidas}/{totalPreguntas}</span>
+                <span>{progresoPct}%</span>
+              </div>
+              <div className="h-2 bg-slate-200 rounded">
+                <div className="h-2 bg-indigo-600 rounded transition-[width] duration-500" style={{ width: `${progresoPct}%` }} />
+              </div>
+            </div>
+            <button
+              onClick={handleSubmit}
+              disabled={saving}
+              className="w-full px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-semibold shadow-sm"
+            >
+              {saving ? 'Guardando…' : 'Guardar'}
+            </button>
+            {ok && <p className="text-emerald-700 text-xs mt-2">✅ {ok}</p>}
+            {error && !loading && <p className="text-rose-700 text-xs mt-2">⚠️ {error}</p>}
+            <div className="text-[11px] text-slate-500 mt-2">
+              Borrador: {draftState === 'saving' ? 'guardando…' : 'guardado ✓'}
+            </div>
+          </div>
+
+          {/* Tips */}
+          <div className="rounded-2xl border bg-white shadow-sm p-4">
+            <h3 className="font-bold mb-2">Atajos</h3>
+            <ul className="text-sm text-slate-600 space-y-1">
+              <li><kbd className="px-1.5 py-0.5 border rounded bg-slate-50">Ctrl/Cmd + S</kbd> Guardar</li>
+              <li><span className="px-1.5 py-0.5 border rounded bg-slate-50">⤡</span> Contraer / expandir bloque</li>
+            </ul>
+          </div>
+        </aside>
       </main>
 
-      {/* Footer minimal */}
+      {/* Botón flotante (móvil) */}
+      <div className="fixed bottom-4 right-4 z-40 md:hidden">
+        <button
+          onClick={handleSubmit}
+          disabled={saving}
+          className="h-12 px-5 rounded-full shadow-lg text-white font-semibold bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60"
+          aria-label="Guardar respuestas"
+        >
+          {saving ? 'Guardando…' : 'Guardar'}
+        </button>
+      </div>
+
+      {/* Footer */}
       <footer className="border-t bg-white/70">
-        <div className="max-w-7xl mx-auto px-6 py-3 text-[11px] text-slate-500 flex items-center justify-between">
-          <span>Mi ruta — ED I</span>
-          <button
-            onClick={() => setReloadKey(k => k + 1)}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded border bg-white hover:bg-slate-50"
-            title="Refrescar datos"
-          >
-            🔁 Refrescar
-          </button>
+        <div className="max-w-7xl mx-auto px-4 py-3 text-[11px] text-slate-500 flex items-center justify-between">
+          <span>Pre-evaluación ED I</span>
+          <span>Ctrl/Cmd + S para guardar rápido</span>
         </div>
       </footer>
     </div>

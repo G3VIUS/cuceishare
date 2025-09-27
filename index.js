@@ -2,6 +2,9 @@
 require('dotenv').config();
 
 const express = require('express');
+const swaggerUi = require("swagger-ui-express");
+const swaggerJsdoc = require("swagger-jsdoc");
+const rateLimit = require('express-rate-limit');
 const cors = require('cors');
 
 const app = express();
@@ -28,8 +31,11 @@ app.use('/apuntes', require('./routes/apuntes'));
 // Autenticación (usuarios, perfiles, JWT)
 app.use('/auth', require('./routes/auth'));
 
-// Pre-evaluación / Ruta de aprendizaje ED I
+// Pre-evaluación / Ruta de aprendizaje ED I (ruta específica existente)
 app.use('/api/ed1', require('./routes/route-ed1'));
+
+// 🔥 Router genérico por materia (usa :subject = slug de subjects)
+app.use('/api/:subject', require('./routes/route-subject'));
 
 /* =======================
    Healthcheck y raíz
