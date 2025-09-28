@@ -3,7 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 // Layout
 import Navbar from './Navbar';
 
-// Páginas
+// Páginas generales
 import Home from './pages/Home';
 import Buscar from './pages/Buscar';
 import SubirApunte from './pages/SubirApunte';
@@ -12,19 +12,22 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import Perfil from './pages/Perfil';
 
-// Proceso de aprendizaje
-import PreEvalED1 from './pages/PreEvalED1';        // ← corregido
-import RouteED1 from './pages/RouteED1';
-import PreEvalGeneric from './pages/PreEvalGeneric'; // ← nuevo
+// Aprendizaje (legacy ED1 + genérico por materia)
+import PreEvalED1 from './pages/PreEvalED1';       // legado / compatibilidad
+import RouteED1 from './pages/RouteED1';           // legado / compatibilidad
+import PreEvalGeneric from './pages/PreEvalGeneric';
+import RouteSubject from './pages/RouteSubject';
 
 // ---- Protecciones ----
 function ProtectedRoute({ children }) {
+  // Compatibilidad: deja pasar si hay token O la sesión antigua 'usuario'
   const token = localStorage.getItem('token');
   const legacyUser = localStorage.getItem('usuario');
   return (token || legacyUser) ? children : <Navigate to="/login" replace />;
 }
 
 function ProtectedRouteToken({ children }) {
+  // Estricto: SOLO si hay token JWT en el storage
   const token = localStorage.getItem('token');
   return token ? children : <Navigate to="/login" replace />;
 }
@@ -61,7 +64,7 @@ export default function App() {
           />
 
           {/* Aprendizaje (requiere JWT) */}
-          {/* ED1 específico (backward compatible) */}
+          {/* Legacy ED1 */}
           <Route
             path="/pre-eval/ed1"
             element={
@@ -79,12 +82,20 @@ export default function App() {
             }
           />
 
-          {/* 🔥 Genérico para cualquier materia por slug */}
+          {/* Genéricos por slug */}
           <Route
             path="/pre-eval/:subjectSlug"
             element={
               <ProtectedRouteToken>
                 <PreEvalGeneric />
+              </ProtectedRouteToken>
+            }
+          />
+          <Route
+            path="/ruta/:subjectSlug"
+            element={
+              <ProtectedRouteToken>
+                <RouteSubject />
               </ProtectedRouteToken>
             }
           />

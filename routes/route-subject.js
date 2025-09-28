@@ -77,6 +77,20 @@ async function getQuizIdBySlug(slug, expectedType /* 'uuid' | 'integer' | 'text'
   } catch { return null; }
 }
 
+/* ---------- helper: elegir columna de orden en attempt_sessions ---------- */
+async function pickSessionOrderExpr() {
+  const hasFinished = await tableHasColumn('attempt_sessions', 'finished_at');
+  const hasStarted  = await tableHasColumn('attempt_sessions', 'started_at');
+  const hasCreated  = await tableHasColumn('attempt_sessions', 'created_at');
+
+  if (hasFinished && hasStarted) return 'coalesce(finished_at, started_at)';
+  if (hasFinished) return 'finished_at';
+  if (hasStarted)  return 'started_at';
+  if (hasCreated)  return 'created_at';
+  // último recurso: por id (uuid) como aproximación de recencia
+  return 'id';
+}
+
 /* =========================================================
    GET /api/:subject/pre-eval  (protegido)
    ========================================================= */
@@ -368,12 +382,14 @@ router.get('/route/summary', authenticate, async (req, res) => {
     const quizId = await getQuizIdBySlug(subjectSlug, quizType || 'uuid');
     if (!quizId) return res.status(500).json({ error: 'No se pudo resolver quiz_id (defínelo por ENV o slug en quizzes).' });
 
+    const orderExpr = await pickSessionOrderExpr();
+
     // última sesión del usuario para ese quiz
     const r = await pool.query(
       `select id
          from attempt_sessions
         where user_id=$1::int and quiz_id=$2::uuid
-        order by coalesce(finished_at, started_at, created_at) desc nulls last
+        order by ${orderExpr} desc nulls last
         limit 1`,
       [userId, quizId]
     );
@@ -437,11 +453,13 @@ router.get('/results/me', authenticate, async (req, res) => {
     const quizId = await getQuizIdBySlug(subjectSlug, quizType || 'uuid');
     if (!quizId) return res.status(500).json({ error: 'No se pudo resolver quiz_id (ENV o slug).' });
 
+    const orderExpr = await pickSessionOrderExpr();
+
     const r = await pool.query(
       `select id
          from attempt_sessions
         where user_id=$1::int and quiz_id=$2::uuid
-        order by coalesce(finished_at, started_at, created_at) desc nulls last
+        order by ${orderExpr} desc nulls last
         limit 1`,
       [userId, quizId]
     );

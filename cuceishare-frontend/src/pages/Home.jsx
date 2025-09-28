@@ -1,36 +1,16 @@
-// src/pages/Home.jsx
 import { Link } from 'react-router-dom';
-
-const SUBJECTS = [
-  {
-    slug: 'ed1',
-    nombre: 'Estructura de Datos I',
-    rutaHref: '/ruta/ed1',           // tu vista actual de ruta (puede quedar así mientras migras)
-    preHref: '/pre-eval/ed1',        // ahora usa el genérico
-    grad: 'from-purple-500 to-indigo-500',
-  },
-  {
-    slug: 'administracion-servidores',
-    nombre: 'Administración de Servidores',
-    rutaHref: '/ruta/administracion-servidores', // si aún no existe, apunta a /pre-eval para no romper
-    preHref: '/pre-eval/administracion-servidores',
-    grad: 'from-indigo-500 to-blue-500',
-  },
-  // agrega más materias aquí…
-];
 
 export default function Home() {
   let sesion = null;
-  // Puedes guardar resultados por materia: `${slug}:preeval:resultados`
-  const progreso = {};
+  let progresoED1 = null;
   try {
     sesion = JSON.parse(localStorage.getItem('usuario'));
-    for (const s of SUBJECTS) {
-      progreso[s.slug] = JSON.parse(localStorage.getItem(`${s.slug}:preeval:resultados`) || 'null');
-    }
+    progresoED1 = JSON.parse(localStorage.getItem('ed1:preeval:resultados'));
   } catch {
     // no-op
   }
+
+  const isAuthed = !!localStorage.getItem('token') || !!sesion;
 
   return (
     <div className="min-h-[calc(100vh-64px)]">
@@ -47,13 +27,14 @@ export default function Home() {
             </p>
 
             <div className="mt-8 flex flex-wrap gap-3">
-              {sesion ? (
+              {isAuthed ? (
                 <>
+                  {/* Accesos rápidos a materias activas */}
                   <Link
                     to="/ruta/ed1"
                     className="inline-flex items-center gap-2 rounded-xl bg-white text-indigo-700 font-semibold px-5 py-3 shadow hover:shadow-md transition"
                   >
-                    📈 Empezar Ruta ED I
+                    📈 Ir a mi ruta (ED I)
                   </Link>
                   <Link
                     to="/pre-eval/ed1"
@@ -61,6 +42,21 @@ export default function Home() {
                   >
                     📊 Pre-evaluación ED I
                   </Link>
+
+                  {/* Administración de Servidores */}
+                  <Link
+                    to="/ruta/administracion-servidores"
+                    className="inline-flex items-center gap-2 rounded-xl bg-white/10 backdrop-blur text-white border border-white/30 font-semibold px-5 py-3 hover:bg-white/20 transition"
+                  >
+                    🗺️ Ruta: Administración de Servidores
+                  </Link>
+                  <Link
+                    to="/pre-eval/administracion-servidores"
+                    className="inline-flex items-center gap-2 rounded-xl bg-white/10 backdrop-blur text-white border border-white/30 font-semibold px-5 py-3 hover:bg-white/20 transition"
+                  >
+                    🧪 Pre-evaluación: Administración de Servidores
+                  </Link>
+
                   <Link
                     to="/buscar"
                     className="inline-flex items-center gap-2 rounded-xl bg-white/10 backdrop-blur text-white border border-white/30 font-semibold px-5 py-3 hover:bg-white/20 transition"
@@ -86,16 +82,10 @@ export default function Home() {
               )}
             </div>
 
-            {sesion && (progreso['ed1'] || progreso['administracion-servidores']) && (
+            {sesion && progresoED1 && (
               <div className="mt-6 text-sm text-white/90">
-                👉 Tienes resultados guardados de pre-evaluación:&nbsp;
-                {Object.entries(progreso)
-                  .filter(([, v]) => !!v)
-                  .map(([slug], i) => (
-                    <Link key={slug} to={`/pre-eval/${slug}`} className="underline font-semibold">
-                      {i ? ', ' : ''}{slug}
-                    </Link>
-                  ))}
+                👉 Tienes resultados guardados en la pre-evaluación de ED I.{' '}
+                <Link to="/pre-eval/ed1" className="underline font-semibold">Continuar</Link>
               </div>
             )}
           </div>
@@ -123,9 +113,9 @@ export default function Home() {
       <section className="max-w-7xl mx-auto px-6 mt-10 md:mt-16">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight">Materias</h2>
-          {sesion ? (
-            <Link to="/ruta/ed1" className="text-indigo-700 font-semibold hover:underline">
-              Ir a mi ruta →
+          {isAuthed ? (
+            <Link to="/buscar" className="text-indigo-700 font-semibold hover:underline">
+              Explorar apuntes →
             </Link>
           ) : (
             <Link to="/login" className="text-indigo-700 font-semibold hover:underline">
@@ -135,31 +125,60 @@ export default function Home() {
         </div>
 
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {SUBJECTS.map((s) => (
-            <div key={s.slug} className="group relative overflow-hidden rounded-2xl bg-white border shadow-sm hover:shadow-lg transition">
-              <div className={`h-24 bg-gradient-to-r ${s.grad}`} />
-              <div className="p-5">
-                <h3 className="text-lg font-bold">{s.nombre}</h3>
-                <p className="text-gray-600 text-sm">
-                  Plan basado en el programa oficial. Ruta adaptativa por bloques.
-                </p>
-                <div className="mt-4 flex gap-2">
-                  <Link
-                    to={s.rutaHref || s.preHref}
-                    className="inline-flex items-center gap-1 px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition"
-                  >
-                    Empezar ruta
-                  </Link>
-                  <Link
-                    to={s.preHref}
-                    className="inline-flex items-center gap-1 px-4 py-2 rounded-xl bg-indigo-100 text-indigo-900 text-sm font-semibold hover:bg-indigo-200 transition"
-                  >
-                    Pre-evaluación
-                  </Link>
-                </div>
+          {/* Estructuras de Datos I */}
+          <div className="group relative overflow-hidden rounded-2xl bg-white border shadow-sm hover:shadow-lg transition">
+            <div className="h-24 bg-gradient-to-r from-purple-500 to-indigo-500" />
+            <div className="p-5">
+              <h3 className="text-lg font-bold">Estructuras de Datos I</h3>
+              <p className="text-gray-600 text-sm">
+                Plan basado en el programa oficial. Ruta adaptativa por bloques.
+              </p>
+              <div className="mt-4 flex gap-2">
+                <Link
+                  to="/ruta/ed1"
+                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition"
+                >
+                  Empezar ruta
+                </Link>
+                <Link
+                  to="/pre-eval/ed1"
+                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl bg-indigo-100 text-indigo-900 text-sm font-semibold hover:bg-indigo-200 transition"
+                >
+                  Pre-evaluación
+                </Link>
               </div>
             </div>
-          ))}
+          </div>
+
+          {/* Administración de Servidores */}
+          <div className="group relative overflow-hidden rounded-2xl bg-white border shadow-sm hover:shadow-lg transition">
+            <div className="h-24 bg-gradient-to-r from-emerald-500 to-teal-500" />
+            <div className="p-5">
+              <h3 className="text-lg font-bold">Administración de Servidores</h3>
+              <p className="text-gray-600 text-sm">
+                Diagnóstico por unidades (arquitectura, SO, servicios de red) y práctica guiada.
+              </p>
+              <div className="mt-4 flex gap-2">
+                <Link
+                  to="/ruta/administracion-servidores"
+                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition"
+                >
+                  Empezar ruta
+                </Link>
+                <Link
+                  to="/pre-eval/administracion-servidores"
+                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl bg-emerald-100 text-emerald-900 text-sm font-semibold hover:bg-emerald-200 transition"
+                >
+                  Pre-evaluación
+                </Link>
+              </div>
+            </div>
+          </div>
+
+          {/* Placeholder próxima materia */}
+          <div className="rounded-2xl bg-white border-dashed border-2 p-5 text-gray-400 flex items-center justify-center">
+            Próximamente: Minería de Datos
+          </div>
         </div>
       </section>
 
@@ -171,18 +190,18 @@ export default function Home() {
               <h3 className="text-xl md:text-2xl font-extrabold">¿Listo para tu siguiente sesión?</h3>
               <p className="text-gray-600">Continúa donde te quedaste o realiza tu diagnóstico inicial.</p>
             </div>
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3">
               <Link
-                to={sesion ? "/ruta/ed1" : "/login"}
+                to={isAuthed ? "/ruta/ed1" : "/login"}
                 className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 text-white font-semibold px-5 py-3 hover:bg-indigo-700 transition"
               >
-                {sesion ? '📈 Ir a mi Ruta' : '🔑 Iniciar sesión'}
+                {isAuthed ? '📈 Ir a mi Ruta (ED I)' : '🔑 Iniciar sesión'}
               </Link>
               <Link
-                to="/pre-eval/ed1"
+                to="/pre-eval/administracion-servidores"
                 className="inline-flex items-center gap-2 rounded-xl bg-indigo-100 text-indigo-900 font-semibold px-5 py-3 hover:bg-indigo-200 transition"
               >
-                📊 Pre-evaluación ED I
+                🧪 Pre-evaluación: Admin. de Servidores
               </Link>
             </div>
           </div>

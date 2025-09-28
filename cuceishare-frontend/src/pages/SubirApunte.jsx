@@ -1,101 +1,416 @@
 // src/pages/SubirApunte.jsx
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import axios from 'axios';
 
+/* ======================
+   Config & helpers
+====================== */
+const API =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) ||
+  process.env.REACT_APP_API_URL ||
+  'http://localhost:3001';
+
+const SUBJECTS = [
+  { slug: 'ed1', nombre: 'Estructuras de Datos I' },
+  { slug: 'administracion-servidores', nombre: 'Administración de Servidores' },
+  // { slug: 'mineria-datos', nombre: 'Minería de Datos' },
+];
+
+const LS_SUBJECT = 'lastSubjectSlug';
+const MAX_MB = 25; // Límite de archivo (MB)
+const ACCEPT = [
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation', // .pptx
+  'application/vnd.ms-powerpoint',
+  'image/png',
+  'image/jpeg',
+  'text/plain',
+];
+
+const cx = (...xs) => xs.filter(Boolean).join(' ');
+const prettyBytes = (b) => {
+  if (!Number.isFinite(b)) return '—';
+  const u = ['B', 'KB', 'MB', 'GB'];
+  let i = 0, n = b;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${u[i]}`;
+};
+
+/* ======================
+   Component
+====================== */
 export default function SubirApunte() {
-  // Tomamos el usuario logueado desde localStorage
-  const usuario = JSON.parse(localStorage.getItem('usuario'))?.tipo;
+  const navigate = useNavigate();
+  const token = localStorage.getItem('token');
+  const sesion = useMemo(() => {
+    try { return JSON.parse(localStorage.getItem('usuario')); } catch { return null; }
+  }, []);
+  const autor = sesion?.username || sesion?.tipo || `user-${sesion?.id ?? ''}`;
 
+  const storedSubject = localStorage.getItem(LS_SUBJECT) || 'ed1';
+  const [subject, setSubject] = useState(
+    SUBJECTS.some(s => s.slug === storedSubject) ? storedSubject : 'ed1'
+  );
+
+  // Campos
   const [titulo, setTitulo] = useState('');
   const [descripcion, setDescripcion] = useState('');
+  const [tagsInput, setTagsInput] = useState('');
+  const tags = useMemo(() =>
+    tagsInput.split(',').map(t => t.trim()).filter(Boolean), [tagsInput]);
+  const [visibilidad, setVisibilidad] = useState('public'); // public | private
+  const [urlExterna, setUrlExterna] = useState('');
+
+  // Archivo
+  const [file, setFile] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileRef = useRef(null);
+
+  // Estado UI
   const [mensaje, setMensaje] = useState('');
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [subiendo, setSubiendo] = useState(false);
+  const [progreso, setProgreso] = useState(0);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  useEffect(() => {
+    if (!token) navigate('/login', { replace: true });
+  }, [token, navigate]);
+
+  useEffect(() => {
+    localStorage.setItem(LS_SUBJECT, subject);
+  }, [subject]);
+
+  function onPickFile(f) {
+    if (!f) return;
+    if (f.size > MAX_MB * 1024 * 1024) {
+      setError(`El archivo supera el límite de ${MAX_MB} MB.`);
+      return;
+    }
+    if (ACCEPT.length && !ACCEPT.includes(f.type)) {
+      // Permitimos si type viene vacío (algunos navegadores con .pdf descargado)
+      if (f.type) {
+        setError('Tipo de archivo no permitido.');
+        return;
+      }
+    }
     setError('');
-    setMensaje('');
+    setFile(f);
+  }
 
-    if (!titulo.trim() || !descripcion.trim()) {
-      setError('❗ Todos los campos son obligatorios.');
+  function onDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    const f = e.dataTransfer?.files?.[0];
+    onPickFile(f);
+  }
+
+  function onDragOver(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(true);
+  }
+
+  function onDragLeave(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setMensaje('');
+    setError('');
+    setProgreso(0);
+
+    if (!titulo.trim()) {
+      setError('❗ El título es obligatorio.');
+      return;
+    }
+    if (!descripcion.trim()) {
+      setError('❗ La descripción es obligatoria.');
+      return;
+    }
+    if (!file && !urlExterna.trim()) {
+      setError('❗ Sube un archivo o proporciona una URL externa.');
       return;
     }
 
-    setLoading(true);
     try {
-      const res = await fetch('http://localhost:3001/apuntes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          titulo,
-          descripcion,
-          autor: usuario,    // usamos el usuario de la sesión
-        }),
-      });
+      setSubiendo(true);
 
-      const body = await res.json();
-      if (!res.ok) {
-        throw new Error(body.error || `HTTP ${res.status}`);
+      // Si hay archivo, usamos multipart/form-data
+      if (file) {
+        const fd = new FormData();
+        fd.append('titulo', titulo);
+        fd.append('descripcion', descripcion);
+        fd.append('autor', autor);
+        fd.append('subject_slug', subject);
+        fd.append('visibilidad', visibilidad);
+        fd.append('tags', JSON.stringify(tags));
+        fd.append('file', file);
+        if (urlExterna.trim()) fd.append('resource_url', urlExterna.trim());
+
+        const { data } = await axios.post(`${API}/apuntes`, fd, {
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            // NO fijar Content-Type: el navegador pondrá el boundary correcto
+          },
+          onUploadProgress: (evt) => {
+            if (!evt.total) return;
+            const pct = Math.round((evt.loaded / evt.total) * 100);
+            setProgreso(pct);
+          }
+        });
+
+        setMensaje(`✅ Apunte creado con ID ${data?.id ?? '—'}`);
+        // Limpieza rápida
+        setTitulo(''); setDescripcion(''); setTagsInput(''); setUrlExterna('');
+        setFile(null); setProgreso(0);
+
+        // Si hay ID, ofrecemos ir a verlo
+        if (data?.id) {
+          setTimeout(() => navigate(`/apunte/${data.id}`), 800);
+        }
+      } else {
+        // Solo URL (JSON)
+        const res = await fetch(`${API}/apuntes`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            titulo,
+            descripcion,
+            autor,
+            subject_slug: subject,
+            visibilidad,
+            tags,
+            resource_url: urlExterna.trim(),
+          }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+
+        setMensaje(`✅ Apunte creado con ID ${body?.id ?? '—'}`);
+        setTitulo(''); setDescripcion(''); setTagsInput(''); setUrlExterna('');
+        if (body?.id) setTimeout(() => navigate(`/apunte/${body.id}`), 800);
       }
-
-      setMensaje(`✅ Apunte "${body.titulo}" creado con ID ${body.id}!`);
-      setTitulo('');
-      setDescripcion('');
     } catch (err) {
-      setError(`❌ Error: ${err.message}`);
+      setError(`❌ Error: ${err.message || 'No se pudo subir el apunte'}`);
     } finally {
-      setLoading(false);
+      setSubiendo(false);
     }
-  };
+  }
 
   return (
-    <div className="max-w-xl mx-auto p-6">
-      <h2 className="text-2xl font-bold mb-4">📤 Subir nuevo apunte</h2>
-
-      {mensaje && (
-        <div className="mb-4 p-2 bg-green-100 text-green-800 rounded">
-          {mensaje}
-        </div>
-      )}
-      {error && (
-        <div className="mb-4 p-2 bg-red-100 text-red-800 rounded">
-          {error}
-        </div>
-      )}
-
-      <form onSubmit={handleSubmit} className="space-y-4">
+    <div className="max-w-4xl mx-auto p-4 md:p-6 space-y-6">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-3">
         <div>
-          <label className="block mb-1 font-semibold">Título</label>
+          <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight">📤 Subir apunte</h2>
+          <p className="text-slate-500 text-sm">Comparte PDFs, presentaciones, imágenes o enlaza recursos externos.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Link to="/perfil" className="px-3 py-2 rounded-xl border bg-white hover:bg-slate-50">Mis apuntes</Link>
+        </div>
+      </div>
+
+      {/* Mensajes */}
+      {mensaje && <div className="rounded-xl border bg-emerald-50 text-emerald-800 px-3 py-2">✅ {mensaje}</div>}
+      {error && <div className="rounded-xl border bg-rose-50 text-rose-800 px-3 py-2">⚠️ {error}</div>}
+
+      {/* Form */}
+      <form onSubmit={handleSubmit} className="bg-white rounded-2xl border shadow-sm p-5 space-y-5">
+        {/* Materia + visibilidad */}
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block mb-1 text-sm font-medium text-slate-700">Materia</label>
+            <select
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 bg-white"
+            >
+              {SUBJECTS.map(s => (
+                <option key={s.slug} value={s.slug}>{s.nombre}</option>
+              ))}
+            </select>
+            <p className="text-xs text-slate-500 mt-1">Se usará para clasificar y recomendar el apunte.</p>
+          </div>
+          <div>
+            <label className="block mb-1 text-sm font-medium text-slate-700">Visibilidad</label>
+            <select
+              value={visibilidad}
+              onChange={(e) => setVisibilidad(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 bg-white"
+            >
+              <option value="public">Público</option>
+              <option value="private">Privado</option>
+            </select>
+            <p className="text-xs text-slate-500 mt-1">Si es privado, solo tú podrás verlo.</p>
+          </div>
+        </div>
+
+        {/* Título */}
+        <div>
+          <label className="block mb-1 text-sm font-medium text-slate-700">Título *</label>
           <input
             type="text"
             value={titulo}
             onChange={(e) => setTitulo(e.target.value)}
-            className="w-full border border-gray-300 rounded-md p-2"
-            placeholder="Ej. Álgebra - Unidad 1"
+            className="w-full border rounded-lg px-3 py-2"
+            placeholder="Ej. ED1 - Árboles y Grafos (resumen)"
           />
         </div>
 
+        {/* Descripción */}
         <div>
-          <label className="block mb-1 font-semibold">Descripción</label>
+          <label className="block mb-1 text-sm font-medium text-slate-700">Descripción *</label>
           <textarea
             value={descripcion}
             onChange={(e) => setDescripcion(e.target.value)}
-            className="w-full border border-gray-300 rounded-md p-2"
-            rows="4"
-            placeholder="Resumen con fórmulas y ejercicios…"
+            className="w-full border rounded-lg px-3 py-2"
+            rows={4}
+            placeholder="Resumen con conceptos clave, ejemplos y ejercicios…"
           />
+          <p className="text-xs text-slate-500 mt-1">Sé descriptivo: ayuda a otros a encontrar tu recurso.</p>
         </div>
 
-        <button
-          type="submit"
-          disabled={loading}
-          className={`w-full text-white py-2 rounded-md transition ${
-            loading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'
-          }`}
-        >
-          {loading ? 'Subiendo…' : 'Subir apunte'}
-        </button>
+        {/* Tags */}
+        <div>
+          <label className="block mb-1 text-sm font-medium text-slate-700">Etiquetas</label>
+          <input
+            type="text"
+            value={tagsInput}
+            onChange={(e) => setTagsInput(e.target.value)}
+            className="w-full border rounded-lg px-3 py-2"
+            placeholder="separa, con, comas (ej. listas, pilas, colas)"
+          />
+          {!!tags.length && (
+            <div className="flex flex-wrap gap-2 mt-2">
+              {tags.map((t, i) => (
+                <span key={`${t}-${i}`} className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-xs border">
+                  #{t}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* URL externa */}
+        <div>
+          <label className="block mb-1 text-sm font-medium text-slate-700">URL externa (opcional)</label>
+          <input
+            type="url"
+            value={urlExterna}
+            onChange={(e) => setUrlExterna(e.target.value)}
+            className="w-full border rounded-lg px-3 py-2"
+            placeholder="https://drive.google.com/… o https://…/mi-apunte.pdf"
+          />
+          <p className="text-xs text-slate-500 mt-1">Puedes pegar un enlace si no deseas subir el archivo.</p>
+        </div>
+
+        {/* Subida de archivo */}
+        <div className="grid md:grid-cols-[1fr_220px] gap-4 items-stretch">
+          <div
+            onDrop={onDrop}
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            className={cx(
+              'rounded-2xl border-2 border-dashed p-6 text-center transition',
+              dragOver ? 'border-indigo-500 bg-indigo-50' : 'border-slate-300'
+            )}
+          >
+            <div className="text-4xl mb-2">📎</div>
+            <p className="font-medium">Arrastra tu archivo aquí</p>
+            <p className="text-sm text-slate-500">o</p>
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                className="px-4 py-2 rounded-xl border bg-white hover:bg-slate-50"
+              >
+                Elegir archivo
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.txt"
+                className="hidden"
+                onChange={(e) => onPickFile(e.target.files?.[0])}
+              />
+            </div>
+
+            {file ? (
+              <div className="mt-4 text-left max-w-md mx-auto">
+                <div className="flex items-center justify-between text-sm">
+                  <div className="truncate">{file.name}</div>
+                  <div className="text-slate-500">{prettyBytes(file.size)}</div>
+                </div>
+                <div className="h-2 bg-slate-200 rounded mt-2 overflow-hidden">
+                  <div
+                    className="h-2 bg-indigo-600 transition-[width] duration-300"
+                    style={{ width: `${progreso}%` }}
+                  />
+                </div>
+                {subiendo && (
+                  <div className="text-xs text-slate-600 mt-1">Subiendo… {progreso}%</div>
+                )}
+                {!subiendo && (
+                  <button
+                    type="button"
+                    className="mt-2 text-rose-600 text-sm hover:underline"
+                    onClick={() => { setFile(null); setProgreso(0); }}
+                  >
+                    Quitar archivo
+                  </button>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500 mt-3">
+                Formatos aceptados: PDF, DOC/DOCX, PPT/PPTX, PNG, JPG, TXT. Límite {MAX_MB} MB.
+              </p>
+            )}
+          </div>
+
+          <div className="rounded-2xl border p-4 bg-slate-50">
+            <div className="text-sm text-slate-700 font-semibold mb-2">Consejos</div>
+            <ul className="text-sm text-slate-600 space-y-1 list-disc list-inside">
+              <li>Prefiere PDF para mayor compatibilidad.</li>
+              <li>Describe el contenido y agrega etiquetas.</li>
+              <li>Si es tuyo, incluye portada o nombre.</li>
+              <li>También puedes compartir solo el enlace.</li>
+            </ul>
+          </div>
+        </div>
+
+        {/* Acciones */}
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="submit"
+            disabled={subiendo}
+            className={cx(
+              'px-5 py-2 rounded-xl text-white font-semibold shadow-sm',
+              subiendo ? 'bg-indigo-400' : 'bg-indigo-600 hover:bg-indigo-700'
+            )}
+          >
+            {subiendo ? 'Subiendo…' : 'Subir apunte'}
+          </button>
+          <Link to="/perfil" className="px-4 py-2 rounded-xl border bg-white hover:bg-slate-50">
+            Cancelar
+          </Link>
+        </div>
       </form>
+
+      {/* Footer tip */}
+      <div className="text-xs text-slate-500">
+        Nota: para subida de archivo se envía <code>multipart/form-data</code> a <code>/apuntes</code>. 
+        Si tu backend solo acepta JSON, añade soporte de archivos (p. ej. con <em>multer</em>) o comparte URL externa.
+      </div>
     </div>
   );
 }
