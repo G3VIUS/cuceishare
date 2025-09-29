@@ -1,9 +1,10 @@
+// src/App.js
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 
 // Layout
 import Navbar from './Navbar';
 
-// Páginas generales
+// Páginas
 import Home from './pages/Home';
 import Buscar from './pages/Buscar';
 import SubirApunte from './pages/SubirApunte';
@@ -12,22 +13,25 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import Perfil from './pages/Perfil';
 
-// Aprendizaje (legacy ED1 + genérico por materia)
-import PreEvalED1 from './pages/PreEvalED1';       // legado / compatibilidad
-import RouteED1 from './pages/RouteED1';           // legado / compatibilidad
+// ED1 (compat)
+import PreEvalED1 from './pages/PreEvalED1';
+import RouteED1 from './pages/RouteED1';
+
+// Genéricas por materia
 import PreEvalGeneric from './pages/PreEvalGeneric';
-import RouteSubject from './pages/RouteSubject';
+import RouteGeneric from './pages/RouteGeneric';
+
+// 📚 Guías y explicaciones (nuevas páginas)
+import ContentTopic from './pages/ContentTopic';
+import ContentQuestion from './pages/ContentQuestion';
 
 // ---- Protecciones ----
 function ProtectedRoute({ children }) {
-  // Compatibilidad: deja pasar si hay token O la sesión antigua 'usuario'
   const token = localStorage.getItem('token');
   const legacyUser = localStorage.getItem('usuario');
   return (token || legacyUser) ? children : <Navigate to="/login" replace />;
 }
-
 function ProtectedRouteToken({ children }) {
-  // Estricto: SOLO si hay token JWT en el storage
   const token = localStorage.getItem('token');
   return token ? children : <Navigate to="/login" replace />;
 }
@@ -63,8 +67,7 @@ export default function App() {
             }
           />
 
-          {/* Aprendizaje (requiere JWT) */}
-          {/* Legacy ED1 */}
+          {/* Aprendizaje: ED1 (legacy) */}
           <Route
             path="/pre-eval/ed1"
             element={
@@ -82,7 +85,7 @@ export default function App() {
             }
           />
 
-          {/* Genéricos por slug */}
+          {/* 🔥 Aprendizaje: Genérico por materia */}
           <Route
             path="/pre-eval/:subjectSlug"
             element={
@@ -95,7 +98,25 @@ export default function App() {
             path="/ruta/:subjectSlug"
             element={
               <ProtectedRouteToken>
-                <RouteSubject />
+                <RouteGeneric />
+              </ProtectedRouteToken>
+            }
+          />
+
+          {/* 📚 Guías (filtradas por bloque) y 💡 Explicaciones por pregunta */}
+          <Route
+            path="/content/:subjectSlug/topic/:blockId"
+            element={
+              <ProtectedRouteToken>
+                <ContentTopic />
+              </ProtectedRouteToken>
+            }
+          />
+          <Route
+            path="/content/:subjectSlug/question/:questionId"
+            element={
+              <ProtectedRouteToken>
+                <ContentQuestion />
               </ProtectedRouteToken>
             }
           />

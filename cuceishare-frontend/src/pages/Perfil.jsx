@@ -515,7 +515,7 @@ export default function Perfil() {
                     </div>
                     <div className="shrink-0 flex gap-2">
                       <Link
-                        to={`/editar/${a.id}`}
+                        to={`/apuntes/${a.id}/editar`}
                         className="px-3 py-1.5 rounded-lg border bg-white hover:bg-slate-50 text-slate-800"
                       >
                         ✏️ Editar

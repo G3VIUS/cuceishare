@@ -1,14 +1,32 @@
 // src/Navbar.jsx
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useLocation, useParams } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 
-const SUBJECTS = [
+// -- Materias por defecto (3 actuales) --
+const SUBJECTS_DEFAULT = [
   { slug: 'ed1', nombre: 'Estructuras de Datos I' },
   { slug: 'administracion-servidores', nombre: 'Administración de Servidores' },
-  // Agrega más aquí:
-  // { slug: 'mineria-datos', nombre: 'Minería de Datos' },
+  { slug: 'mineria-datos', nombre: 'Minería de Datos' },
 ];
 
+// Permite sobrescribir la lista desde .env con:
+// REACT_APP_SUBJECTS="ed1:Estructuras de Datos I,administracion-servidores:Administración de Servidores,mineria-datos:Minería de Datos"
+function getSubjectsFromEnv() {
+  const raw = process.env.REACT_APP_SUBJECTS || '';
+  if (!raw.trim()) return SUBJECTS_DEFAULT;
+  try {
+    const items = raw.split(',').map(s => s.trim()).filter(Boolean);
+    const parsed = items.map(item => {
+      const [slug, ...rest] = item.split(':');
+      return { slug: slug?.trim(), nombre: rest.join(':').trim() || slug?.trim() };
+    }).filter(x => x.slug);
+    return parsed.length ? parsed : SUBJECTS_DEFAULT;
+  } catch {
+    return SUBJECTS_DEFAULT;
+  }
+}
+
+const SUBJECTS = getSubjectsFromEnv();
 const LS_SUBJECT = 'lastSubjectSlug';
 
 export default function Navbar() {
@@ -23,13 +41,16 @@ export default function Navbar() {
   const isAuthed = !!token || !!legacyUser;
   const isAuthPage = pathname === '/login' || pathname === '/register';
 
-  // --- materia activa (persistida) ---
+  // --- detectar subject desde URL ---
   const initialSubject = useMemo(() => {
-    // 1) lee de la URL si estás parado en /pre-eval/:subjectSlug o /ruta/:subjectSlug
     const parts = pathname.split('/').filter(Boolean);
-    const slugFromUrl = (parts[0] === 'pre-eval' || parts[0] === 'ruta') ? parts[1] : null;
+    let slugFromUrl = null;
+    // soporta varias rutas con :subjectSlug
+    if (['pre-eval', 'ruta', 'content', 'practice'].includes(parts[0])) {
+      slugFromUrl = parts[1] || null;
+    }
     const stored = localStorage.getItem(LS_SUBJECT);
-    const fallback = 'ed1';
+    const fallback = SUBJECTS[0]?.slug || 'ed1';
     const candidate = slugFromUrl || stored || fallback;
     return SUBJECTS.some(s => s.slug === candidate) ? candidate : fallback;
   }, [pathname]);
@@ -40,7 +61,8 @@ export default function Navbar() {
     localStorage.setItem(LS_SUBJECT, subject);
   }, [subject]);
 
-  const currentSubject = SUBJECTS.find(s => s.slug === subject) || SUBJECTS[0];
+  const currentSubject =
+    SUBJECTS.find(s => s.slug === subject) || SUBJECTS[0] || { slug: 'ed1', nombre: 'Estructuras de Datos I' };
 
   // --- estilos ---
   const linkBase = 'hover:text-purple-700 transition-colors';
@@ -48,27 +70,23 @@ export default function Navbar() {
 
   // --- acciones ---
   const handleLogout = () => {
-    // limpia todo lo relacionado a sesión y borradores multi-materia
     localStorage.removeItem('token');
     localStorage.removeItem('usuario');
-
-    // borra posibles borradores por materia (por convención usamos `${slug}:preeval:draft`)
     SUBJECTS.forEach(s => {
       localStorage.removeItem(`${s.slug}:preeval:draft`);
       localStorage.removeItem(`${s.slug}:route:progress`);
     });
-
     navigate('/login');
   };
 
   const goPreEval = () => navigate(`/pre-eval/${currentSubject.slug}`);
+  const goRuta = () => navigate(`/ruta/${currentSubject.slug}`);
 
-  // Si aún NO tienes ruta genérica, deja fallback a ED1:
-  const hasGenericRoute = true; // ponlo en false si aún no creas /ruta/:subjectSlug
-  const goRuta = () => {
-    if (hasGenericRoute) navigate(`/ruta/${currentSubject.slug}`);
-    else navigate('/ruta/ed1');
-  };
+  // Cierra dropdowns al navegar entre páginas
+  useEffect(() => {
+    setMenuOpen(false);
+    setSubjectOpen(false);
+  }, [pathname]);
 
   return (
     <nav className="bg-white shadow-md sticky top-0 z-40">
@@ -79,7 +97,7 @@ export default function Navbar() {
         </Link>
 
         {/* Materia (desktop) */}
-        {isAuthed && (
+        {isAuthed && SUBJECTS.length > 0 && (
           <div className="hidden md:flex items-center gap-3">
             <div className="relative">
               <button
@@ -94,7 +112,7 @@ export default function Navbar() {
               </button>
               {subjectOpen && (
                 <div
-                  className="absolute left-0 mt-2 w-72 rounded-xl border bg-white shadow-lg p-2"
+                  className="absolute left-0 mt-2 w-80 rounded-xl border bg-white shadow-lg p-2"
                   onMouseLeave={() => setSubjectOpen(false)}
                 >
                   <ul role="listbox" className="max-h-64 overflow-auto">
@@ -103,7 +121,9 @@ export default function Navbar() {
                         <button
                           role="option"
                           onClick={() => { setSubjectOpen(false); setSubject(s.slug); }}
-                          className={`w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 ${s.slug === subject ? 'bg-slate-100 font-semibold' : ''}`}
+                          className={`w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 ${
+                            s.slug === subject ? 'bg-slate-100 font-semibold' : ''
+                          }`}
                         >
                           {s.nombre}
                         </button>
@@ -144,7 +164,7 @@ export default function Navbar() {
       {/* Menú responsive */}
       <div className={`md:hidden ${menuOpen ? 'block' : 'hidden'} border-t`}>
         <div className="px-4 py-3 flex flex-col gap-3 font-medium">
-          {/* ---- Sin sesión ---- */}
+          {/* Sin sesión */}
           {!isAuthed && (
             <>
               {isAuthPage ? (
@@ -163,7 +183,7 @@ export default function Navbar() {
             </>
           )}
 
-          {/* ---- Con sesión ---- */}
+          {/* Con sesión */}
           {isAuthed && (
             <>
               <Link to="/" className={`${linkBase} ${pathname==='/'?active:''}`}>🏠 Inicio</Link>
@@ -172,32 +192,34 @@ export default function Navbar() {
               <Link to="/perfil" className={`${linkBase} ${pathname==='/perfil'?active:''}`}>👤 Perfil</Link>
 
               {/* Selector de materia (móvil) */}
-              <div className="pt-2 border-t">
-                <div className="text-xs text-slate-500 mb-1">Materia</div>
-                <select
-                  className="w-full px-3 py-2 rounded-lg border bg-white"
-                  value={subject}
-                  onChange={(e) => setSubject(e.target.value)}
-                >
-                  {SUBJECTS.map(s => (
-                    <option key={s.slug} value={s.slug}>{s.nombre}</option>
-                  ))}
-                </select>
-                <div className="mt-2 flex flex-col gap-2">
-                  <button
-                    onClick={() => { setMenuOpen(false); goPreEval(); }}
-                    className="w-full px-3 py-2 rounded-lg bg-indigo-600 text-white"
+              {SUBJECTS.length > 0 && (
+                <div className="pt-2 border-t">
+                  <div className="text-xs text-slate-500 mb-1">Materia</div>
+                  <select
+                    className="w-full px-3 py-2 rounded-lg border bg-white"
+                    value={subject}
+                    onChange={(e) => setSubject(e.target.value)}
                   >
-                    📊 Pre-evaluación
-                  </button>
-                  <button
-                    onClick={() => { setMenuOpen(false); goRuta(); }}
-                    className="w-full px-3 py-2 rounded-lg bg-emerald-600 text-white"
-                  >
-                    🗺️ Mi ruta
-                  </button>
+                    {SUBJECTS.map(s => (
+                      <option key={s.slug} value={s.slug}>{s.nombre}</option>
+                    ))}
+                  </select>
+                  <div className="mt-2 flex flex-col gap-2">
+                    <button
+                      onClick={() => { setMenuOpen(false); goPreEval(); }}
+                      className="w-full px-3 py-2 rounded-lg bg-indigo-600 text-white"
+                    >
+                      📊 Pre-evaluación
+                    </button>
+                    <button
+                      onClick={() => { setMenuOpen(false); goRuta(); }}
+                      className="w-full px-3 py-2 rounded-lg bg-emerald-600 text-white"
+                    >
+                      🗺️ Mi ruta
+                    </button>
+                  </div>
                 </div>
-              </div>
+              )}
 
               <button onClick={handleLogout} className="mt-2 text-left hover:text-red-600 font-semibold">
                 🚪 Cerrar sesión
@@ -207,7 +229,7 @@ export default function Navbar() {
         </div>
       </div>
 
-      {/* Barra inferior de navegación (desktop links simples) */}
+      {/* Barra inferior (desktop) */}
       <div className="hidden md:block border-t">
         <div className="max-w-7xl mx-auto px-4 py-2 flex items-center gap-6 text-sm">
           <Link to="/" className={`${linkBase} ${pathname==='/'?active:''}`}>🏠 Inicio</Link>

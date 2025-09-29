@@ -1,53 +1,172 @@
-import { useState, useEffect } from 'react';
+// src/pages/Buscar.jsx
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+
+const API =
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ||
+  process.env.REACT_APP_API_URL ||
+  "http://localhost:3001";
+
+/* ===== Helpers (arriba del componente) ===== */
+
+// Paleta por materia
+const materiaColor = (m) => {
+  if (!m) return "bg-slate-100 text-slate-700";
+  const key = String(m).toLowerCase();
+  if (key.includes("estructuras")) return "bg-violet-100 text-violet-700";
+  if (key.includes("servidores"))  return "bg-emerald-100 text-emerald-700";
+  if (key.includes("datos"))       return "bg-cyan-100 text-cyan-700";
+  if (key.includes("red"))         return "bg-indigo-100 text-indigo-700";
+  if (key.includes("sistemas"))    return "bg-amber-100 text-amber-700";
+  return "bg-slate-100 text-slate-700";
+};
+
+// Fecha amigable
+const fmtFecha = (s) => (s ? new Date(s).toLocaleDateString() : "");
+
+/* ===== Componente ===== */
 
 export default function Buscar() {
-  const [apuntes, setApuntes] = useState([]);
-  const [filtro, setFiltro] = useState('');
+  const [q, setQ] = useState("");
+  const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState(null);
+  const [err, setErr] = useState("");
 
   useEffect(() => {
-    fetch('http://localhost:3001/apuntes')
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
-      .then((data) => setApuntes(data))
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+    (async () => {
+      setLoading(true); setErr("");
+      try {
+        const r = await fetch(`${API}/apuntes`);
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+        const arr = Array.isArray(j) ? j : (j.apuntes || j.items || []);
+        setItems(arr);
+      } catch (e) {
+        setErr(e.message || "No se pudo cargar el listado");
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
-  const resultados = apuntes.filter((a) =>
-    a.titulo.toLowerCase().includes(filtro.toLowerCase()) ||
-    a.autor.toLowerCase().includes(filtro.toLowerCase())
-  );
-
-  if (loading) return <p className="p-4">Cargando…</p>;
-  if (error)   return <p className="p-4 text-red-600">Error: {error}</p>;
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return items;
+    return items.filter(a =>
+      String(a.titulo || a.title || "").toLowerCase().includes(s) ||
+      String(a.autor || a.user || a.usuario || "").toLowerCase().includes(s)
+    );
+  }, [q, items]);
 
   return (
-    <div className="max-w-4xl mx-auto p-6">
-      <h2 className="text-2xl font-bold mb-4">🔍 Buscar apuntes</h2>
+    <div className="max-w-4xl mx-auto p-4 md:p-6 space-y-5">
+      <h1 className="text-2xl md:text-3xl font-extrabold bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">
+        Buscar apuntes
+      </h1>
+
       <input
-        type="text"
-        placeholder="Busca por título o autor..."
-        value={filtro}
-        onChange={(e) => setFiltro(e.target.value)}
-        className="w-full border border-gray-300 rounded-md p-2 mb-6"
+        className="w-full px-3 py-2 rounded-lg border focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+        placeholder="Busca por título o autor…"
+        value={q}
+        onChange={e => setQ(e.target.value)}
+        aria-label="Buscar apuntes"
       />
 
-      {resultados.length > 0 ? (
-        resultados.map((a) => (
-          <div
-            key={a.id}
-            className="bg-white p-4 rounded-md shadow mb-4"
-          >
-            <h3 className="font-semibold text-lg">{a.titulo}</h3>
-            <p className="text-sm text-gray-600">Autor: {a.autor}</p>
-          </div>
-        ))
+      {loading ? (
+        <div className="grid gap-3">
+          <div className="h-16 rounded-2xl bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200 animate-pulse" />
+          <div className="h-16 rounded-2xl bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200 animate-pulse" />
+          <div className="h-16 rounded-2xl bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200 animate-pulse" />
+        </div>
+      ) : err ? (
+        <div className="p-4 rounded-2xl border bg-rose-50 text-rose-800">⚠️ {err}</div>
+      ) : filtered.length === 0 ? (
+        <div className="rounded-2xl border bg-white p-8 text-center">
+          <div className="text-3xl mb-2">🧐</div>
+          <div className="font-semibold">Sin resultados</div>
+          <p className="text-sm text-slate-500">Prueba con otras palabras clave o filtra por materia.</p>
+        </div>
       ) : (
-        <p className="text-gray-500">No se encontraron apuntes.</p>
+        <ul className="space-y-3">
+          {filtered.map((a) => {
+            const id       = a.id;
+            const title    = a.titulo || a.title || `Apunte #${id}`;
+            const autor    = a.autor || a.user || a.usuario || "desconocido";
+            const materia  = a.materia || a.subject || "";
+            const semestre = a.semestre || a.semester || "";
+            const tags     = Array.isArray(a.etiquetas || a.tags)
+              ? (a.etiquetas || a.tags)
+              : String(a.etiquetas || a.tags || "")
+                  .split(",").map(t=>t.trim()).filter(Boolean);
+            const fecha    = a.created_at || a.creado_en || a.fecha || "";
+
+            return (
+              <li key={id}>
+                <Link
+                  to={`/apuntes/${id}`}
+                  className="group block rounded-2xl border bg-white p-4 sm:p-5 shadow-sm hover:shadow-md transition-shadow hover:border-indigo-200 focus-visible:ring-2 focus-visible:ring-indigo-500 outline-none"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="h-10 w-10 shrink-0 grid place-items-center rounded-xl bg-indigo-50 text-indigo-700 text-lg group-hover:bg-indigo-100 transition-colors">
+                      📄
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="font-semibold text-slate-900 truncate">
+                          {title}
+                        </h3>
+                        {materia && (
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${materiaColor(materia)}`}>
+                            {materia}
+                          </span>
+                        )}
+                        {semestre && (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
+                            Sem {semestre}
+                          </span>
+                        )}
+                      </div>
+
+                      {(a.descripcion || a.description) && (
+                        <p className="text-sm text-slate-600 mt-1 line-clamp-2">
+                          {a.descripcion || a.description}
+                        </p>
+                      )}
+
+                      {tags.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {tags.slice(0, 6).map((t, i) => (
+                            <span key={i} className="text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                              #{t}
+                            </span>
+                          ))}
+                          {tags.length > 6 && (
+                            <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-50 text-slate-500">
+                              +{tags.length - 6}
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+                        <div className="flex items-center gap-3">
+                          <span>Autor: <b className="text-slate-700">{autor}</b></span>
+                          {fecha && <span className="hidden sm:inline">· {fmtFecha(fecha)}</span>}
+                        </div>
+                        <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1 text-indigo-700">
+                            Ver <span aria-hidden>→</span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
       )}
     </div>
   );

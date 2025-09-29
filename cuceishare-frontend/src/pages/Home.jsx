@@ -1,3 +1,4 @@
+// src/pages/Home.jsx
 import { Link } from 'react-router-dom';
 
 export default function Home() {
@@ -9,8 +10,6 @@ export default function Home() {
   } catch {
     // no-op
   }
-
-  const isAuthed = !!localStorage.getItem('token') || !!sesion;
 
   return (
     <div className="min-h-[calc(100vh-64px)]">
@@ -27,14 +26,13 @@ export default function Home() {
             </p>
 
             <div className="mt-8 flex flex-wrap gap-3">
-              {isAuthed ? (
+              {sesion ? (
                 <>
-                  {/* Accesos rápidos a materias activas */}
                   <Link
                     to="/ruta/ed1"
                     className="inline-flex items-center gap-2 rounded-xl bg-white text-indigo-700 font-semibold px-5 py-3 shadow hover:shadow-md transition"
                   >
-                    📈 Ir a mi ruta (ED I)
+                    📈 Empezar Ruta ED I
                   </Link>
                   <Link
                     to="/pre-eval/ed1"
@@ -42,21 +40,6 @@ export default function Home() {
                   >
                     📊 Pre-evaluación ED I
                   </Link>
-
-                  {/* Administración de Servidores */}
-                  <Link
-                    to="/ruta/administracion-servidores"
-                    className="inline-flex items-center gap-2 rounded-xl bg-white/10 backdrop-blur text-white border border-white/30 font-semibold px-5 py-3 hover:bg-white/20 transition"
-                  >
-                    🗺️ Ruta: Administración de Servidores
-                  </Link>
-                  <Link
-                    to="/pre-eval/administracion-servidores"
-                    className="inline-flex items-center gap-2 rounded-xl bg-white/10 backdrop-blur text-white border border-white/30 font-semibold px-5 py-3 hover:bg-white/20 transition"
-                  >
-                    🧪 Pre-evaluación: Administración de Servidores
-                  </Link>
-
                   <Link
                     to="/buscar"
                     className="inline-flex items-center gap-2 rounded-xl bg-white/10 backdrop-blur text-white border border-white/30 font-semibold px-5 py-3 hover:bg-white/20 transition"
@@ -113,9 +96,9 @@ export default function Home() {
       <section className="max-w-7xl mx-auto px-6 mt-10 md:mt-16">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight">Materias</h2>
-          {isAuthed ? (
-            <Link to="/buscar" className="text-indigo-700 font-semibold hover:underline">
-              Explorar apuntes →
+          {sesion ? (
+            <Link to="/ruta/ed1" className="text-indigo-700 font-semibold hover:underline">
+              Ir a mi ruta →
             </Link>
           ) : (
             <Link to="/login" className="text-indigo-700 font-semibold hover:underline">
@@ -125,7 +108,7 @@ export default function Home() {
         </div>
 
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {/* Estructuras de Datos I */}
+          {/* ED I */}
           <div className="group relative overflow-hidden rounded-2xl bg-white border shadow-sm hover:shadow-lg transition">
             <div className="h-24 bg-gradient-to-r from-purple-500 to-indigo-500" />
             <div className="p-5">
@@ -152,22 +135,22 @@ export default function Home() {
 
           {/* Administración de Servidores */}
           <div className="group relative overflow-hidden rounded-2xl bg-white border shadow-sm hover:shadow-lg transition">
-            <div className="h-24 bg-gradient-to-r from-emerald-500 to-teal-500" />
+            <div className="h-24 bg-gradient-to-r from-amber-500 to-orange-500" />
             <div className="p-5">
               <h3 className="text-lg font-bold">Administración de Servidores</h3>
               <p className="text-gray-600 text-sm">
-                Diagnóstico por unidades (arquitectura, SO, servicios de red) y práctica guiada.
+                Diagnóstico por unidades: arquitectura, SO, servicios de red, seguridad.
               </p>
               <div className="mt-4 flex gap-2">
                 <Link
                   to="/ruta/administracion-servidores"
-                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition"
+                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl bg-amber-600 text-white text-sm font-semibold hover:bg-amber-700 transition"
                 >
                   Empezar ruta
                 </Link>
                 <Link
                   to="/pre-eval/administracion-servidores"
-                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl bg-emerald-100 text-emerald-900 text-sm font-semibold hover:bg-emerald-200 transition"
+                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl bg-amber-100 text-amber-900 text-sm font-semibold hover:bg-amber-200 transition"
                 >
                   Pre-evaluación
                 </Link>
@@ -175,9 +158,29 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Placeholder próxima materia */}
-          <div className="rounded-2xl bg-white border-dashed border-2 p-5 text-gray-400 flex items-center justify-center">
-            Próximamente: Minería de Datos
+          {/* Minería de Datos */}
+          <div className="group relative overflow-hidden rounded-2xl bg-white border shadow-sm hover:shadow-lg transition">
+            <div className="h-24 bg-gradient-to-r from-emerald-500 to-teal-500" />
+            <div className="p-5">
+              <h3 className="text-lg font-bold">Minería de Datos</h3>
+              <p className="text-gray-600 text-sm">
+                Pre-evaluación alineada al programa: preparación de datos, modelos y evaluación.
+              </p>
+              <div className="mt-4 flex gap-2">
+                <Link
+                  to="/ruta/mineria-datos"
+                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition"
+                >
+                  Empezar ruta
+                </Link>
+                <Link
+                  to="/pre-eval/mineria-datos"
+                  className="inline-flex items-center gap-1 px-4 py-2 rounded-xl bg-emerald-100 text-emerald-900 text-sm font-semibold hover:bg-emerald-200 transition"
+                >
+                  Pre-evaluación
+                </Link>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -190,18 +193,18 @@ export default function Home() {
               <h3 className="text-xl md:text-2xl font-extrabold">¿Listo para tu siguiente sesión?</h3>
               <p className="text-gray-600">Continúa donde te quedaste o realiza tu diagnóstico inicial.</p>
             </div>
-            <div className="flex flex-wrap gap-3">
+            <div className="flex gap-3">
               <Link
-                to={isAuthed ? "/ruta/ed1" : "/login"}
+                to={sesion ? "/ruta/ed1" : "/login"}
                 className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 text-white font-semibold px-5 py-3 hover:bg-indigo-700 transition"
               >
-                {isAuthed ? '📈 Ir a mi Ruta (ED I)' : '🔑 Iniciar sesión'}
+                {sesion ? '📈 Ir a mi Ruta' : '🔑 Iniciar sesión'}
               </Link>
               <Link
-                to="/pre-eval/administracion-servidores"
-                className="inline-flex items-center gap-2 rounded-xl bg-indigo-100 text-indigo-900 font-semibold px-5 py-3 hover:bg-indigo-200 transition"
+                to="/pre-eval/mineria-datos"
+                className="inline-flex items-center gap-2 rounded-xl bg-emerald-100 text-emerald-900 font-semibold px-5 py-3 hover:bg-emerald-200 transition"
               >
-                🧪 Pre-evaluación: Admin. de Servidores
+                📊 Pre-evaluación Minería de Datos
               </Link>
             </div>
           </div>
