@@ -10,7 +10,9 @@ const PORT = process.env.PORT || 3001;
 
 /* =======================
    Middlewares globales
+   
    ======================= */
+ 
 
 app.set('trust proxy', 1); // opcional, útil si estás detrás de un proxy
 
