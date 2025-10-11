@@ -3,7 +3,13 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 
-const API = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+const API =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) ||
+  process.env.REACT_APP_API_URL ||
+  'http://localhost:3001';
+
+const SUBJECT_SLUG = 'ed1'; // 👈 materia de esta pantalla
+
 const cx = (...xs) => xs.filter(Boolean).join(' ');
 const Icon = ({ children, className='' }) => (
   <span className={cx('inline-grid place-items-center rounded-lg', className)}>{children}</span>
@@ -13,18 +19,21 @@ const Skeleton = ({ className='' }) => <div className={cx('animate-pulse bg-gray
 export default function PreEvalED1() {
   const navigate = useNavigate();
 
-  // Session (memo para evitar renders infinitos)
+  // Session
   const user = useMemo(() => {
     try { return JSON.parse(localStorage.getItem('usuario') || 'null'); } catch { return null; }
   }, []);
   const token = useMemo(() => localStorage.getItem('token') || '', []);
   const userId = user?.id ?? null;
 
-  // Draft key por usuario
-  const key = (k) => `ed1:${k}:${user?.id ?? 'anon'}`;
-  const DRAFT_KEY = key('preeval:draft');
+  // Draft key por usuario + materia (evita mezclar borradores de otras materias)
+  const draftKey = useMemo(
+    () => `ed1:preeval:draft:${user?.id ?? 'anon'}`,
+    [user?.id]
+  );
 
-  // Estado principal
+  // Estado principal (estado "crudo" + estado filtrado)
+  const [raw, setRaw] = useState({ subject: null, blocks: [], questions: [], choices: [], openKeys: [] });
   const [blocks, setBlocks] = useState([]);
   const [questions, setQuestions] = useState([]);
   const [choices, setChoices] = useState([]);
@@ -34,13 +43,13 @@ export default function PreEvalED1() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [ok, setOk] = useState('');
-  const [info, setInfo] = useState(''); // para mensajes sutiles (p.ej. “borrador restaurado”)
+  const [info, setInfo] = useState('');
 
   const [selectedChoice, setSelectedChoice] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}').choices || {}; } catch { return {}; }
+    try { return JSON.parse(localStorage.getItem(draftKey) || '{}').choices || {}; } catch { return {}; }
   });
   const [openAnswers, setOpenAnswers] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}').opens || {}; } catch { return {}; }
+    try { return JSON.parse(localStorage.getItem(draftKey) || '{}').opens || {}; } catch { return {}; }
   });
   const [draftState, setDraftState] = useState('saved');
   const [collapsed, setCollapsed] = useState({});
@@ -51,7 +60,7 @@ export default function PreEvalED1() {
     if (!user || !token) navigate('/login', { replace: true });
   }, [userId, token, navigate]);
 
-  // Carga banco de preguntas
+  // Carga banco de preguntas (pide por materia)
   useEffect(() => {
     let alive = true;
     if (!user || !token) return;
@@ -60,16 +69,22 @@ export default function PreEvalED1() {
       try {
         const { data } = await axios.get(`${API}/api/ed1/pre-eval`, {
           headers: { Authorization: `Bearer ${token}` },
-          params: { _t: Date.now() },
+          params: { subjectSlug: SUBJECT_SLUG, _t: Date.now() }, // 👈 pedimos por materia
         });
+
         if (!alive) return;
-        setBlocks(data?.blocks || []);
-        setQuestions(data?.questions || []);
-        setChoices(data?.choices || []);
-        setOpenKeys(data?.openKeys || []);
-        // Msg si encontramos borrador
-        const draft = localStorage.getItem(DRAFT_KEY);
-        if (draft) setInfo('Se restauró tu borrador automáticamente.');
+
+        // Guardamos crudo
+        const subject = data?.subject ?? null;
+        const rawBlocks = Array.isArray(data?.blocks) ? data.blocks : [];
+        const rawQuestions = Array.isArray(data?.questions) ? data.questions : [];
+        const rawChoices = Array.isArray(data?.choices) ? data.choices : [];
+        const rawOpenKeys = Array.isArray(data?.openKeys) ? data.openKeys : [];
+
+        setRaw({ subject, blocks: rawBlocks, questions: rawQuestions, choices: rawChoices, openKeys: rawOpenKeys });
+
+        // Notifica borrador restaurado
+        if (localStorage.getItem(draftKey)) setInfo('Se restauró tu borrador automáticamente.');
       } catch (e) {
         if (!alive) return;
         if (e?.response?.status === 401) { navigate('/login', { replace: true }); return; }
@@ -77,17 +92,43 @@ export default function PreEvalED1() {
       } finally { if (alive) setLoading(false); }
     })();
     return () => { alive = false; };
-  }, [userId, token, navigate, DRAFT_KEY]);
+  }, [userId, token, navigate, draftKey]);
 
-  // Guardado de borrador
+  // Filtrado defensivo por materia (si el backend trae de más)
+  useEffect(() => {
+    // 1) Determinar subjectId si viene del backend
+    const subjectId = raw?.subject?.id || null;
+
+    // 2) Filtrar bloques por subjectId si existe; si no, asumimos que el backend ya filtró
+    const filteredBlocks = subjectId
+      ? raw.blocks.filter(b => String(b.subject_id || '') === String(subjectId))
+      : raw.blocks.slice();
+
+    const allowedBlockIds = new Set(filteredBlocks.map(b => b.id));
+
+    // 3) Filtrar preguntas solo de esos bloques
+    const filteredQuestions = raw.questions.filter(q => allowedBlockIds.has(q.block_id));
+    const allowedQuestionIds = new Set(filteredQuestions.map(q => q.id));
+
+    // 4) Filtrar choices y openKeys que pertenezcan a esas preguntas
+    const filteredChoices = raw.choices.filter(c => allowedQuestionIds.has(c.question_id));
+    const filteredOpenKeys = raw.openKeys.filter(k => allowedQuestionIds.has(k.question_id));
+
+    setBlocks(filteredBlocks);
+    setQuestions(filteredQuestions);
+    setChoices(filteredChoices);
+    setOpenKeys(filteredOpenKeys);
+  }, [raw]);
+
+  // Guardado de borrador (por materia)
   useEffect(() => {
     setDraftState('saving');
     const h = setTimeout(() => {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({ choices: selectedChoice, opens: openAnswers }));
+      localStorage.setItem(draftKey, JSON.stringify({ choices: selectedChoice, opens: openAnswers }));
       setDraftState('saved');
     }, 300);
     return () => clearTimeout(h);
-  }, [selectedChoice, openAnswers, DRAFT_KEY]);
+  }, [selectedChoice, openAnswers, draftKey]);
 
   // Índices
   const choicesByQ = useMemo(() => {
@@ -124,7 +165,7 @@ export default function PreEvalED1() {
     } return res;
   }, [blocks, questionsByBlock, selectedChoice, openAnswers]);
 
-  // Atajo guardar
+  // Guardar (POST)
   const handleSubmit = async () => {
     setOk(''); setError('');
     if (!user || !token) { navigate('/login', { replace: true }); return; }
@@ -141,7 +182,7 @@ export default function PreEvalED1() {
     if (!respuestas.length) { setError('No has respondido ninguna pregunta.'); return; }
     try {
       setSaving(true);
-      await axios.post(`${API}/api/ed1/attempts`, { subjectSlug: 'ed1', respuestas }, {
+      await axios.post(`${API}/api/ed1/attempts`, { subjectSlug: SUBJECT_SLUG, respuestas }, {
         headers: { Authorization: `Bearer ${token}` },
       });
       setOk('¡Respuestas guardadas!');
@@ -154,6 +195,7 @@ export default function PreEvalED1() {
     } finally { setSaving(false); }
   };
 
+  // Atajo Ctrl/Cmd+S
   const onKey = useCallback((e) => {
     const mac = navigator.platform.toUpperCase().includes('MAC');
     if ((mac && e.metaKey && e.key.toLowerCase() === 's') || (!mac && e.ctrlKey && e.key.toLowerCase() === 's')) {
@@ -166,8 +208,6 @@ export default function PreEvalED1() {
   }, [onKey]);
 
   // Helpers UI
-  const expandAll = () => { const all = {}; for (const b of blocks) all[b.id] = false; setCollapsed(all); };
-  const collapseAll = () => { const all = {}; for (const b of blocks) all[b.id] = true; setCollapsed(all); };
   const shortId = (id) => String(id).slice(-4).padStart(4, '0');
 
   if (!user || !token) return <div className="p-6 text-center">Redirigiendo…</div>;
@@ -257,8 +297,7 @@ export default function PreEvalED1() {
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <button
               onClick={() => {
-                // expandir solo el bloque colapsado más cercano (UX sutil)
-                const next = { ...collapsed }; Object.keys(next).forEach(k => next[k] = false); setCollapsed(next);
+                const next = {}; blocks.forEach(b => next[b.id] = false); setCollapsed(next);
               }}
               className="px-3 py-1.5 rounded-full border bg-white hover:bg-slate-50 text-slate-700"
             >
@@ -266,7 +305,7 @@ export default function PreEvalED1() {
             </button>
             <button
               onClick={() => {
-                const next = { ...collapsed }; blocks.forEach(b => next[b.id] = true); setCollapsed(next);
+                const next = {}; blocks.forEach(b => next[b.id] = true); setCollapsed(next);
               }}
               className="px-3 py-1.5 rounded-full border bg-white hover:bg-slate-50 text-slate-700"
             >
@@ -283,7 +322,7 @@ export default function PreEvalED1() {
             </div>
           </div>
 
-          {/* Estados de carga / vacío / error */}
+          {/* Estados */}
           {loading ? (
             <div className="space-y-4">
               <Skeleton className="h-8 w-64" />
@@ -309,9 +348,17 @@ export default function PreEvalED1() {
           ) : (
             <div className="space-y-6">
               {blocks.map((b, bIndex) => {
-                const bp = blockProgress[b.id] || { done: 0, total: 0, pct: 0 };
+                const bp = (()=>{
+                  const qs = questionsByBlock[b.id] || [];
+                  const done = qs.reduce((acc, q)=>
+                    acc + (q.tipo === 'opcion' ? !!selectedChoice[q.id] : !!(openAnswers[q.id]||'').trim()), 0
+                  );
+                  return { done, total: qs.length, pct: qs.length ? Math.round((done/qs.length)*100) : 0 };
+                })();
+
                 const isCol = !!collapsed[b.id];
                 const qs = questionsByBlock[b.id] || [];
+
                 return (
                   <section
                     key={b.id}
@@ -462,7 +509,7 @@ export default function PreEvalED1() {
         </button>
       </div>
 
-      {/* Footer minimal */}
+      {/* Footer */}
       <footer className="border-t bg-white/70">
         <div className="max-w-7xl mx-auto px-4 py-3 text-[11px] text-slate-500 flex items-center justify-between">
           <span>Pre-evaluación ED I</span>

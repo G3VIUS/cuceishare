@@ -20,6 +20,22 @@ function Stat({ label, value, sub }) {
   );
 }
 
+const TIPO_LABEL = {
+  pdf: 'PDF',
+  libro: 'Libro',
+  web: 'Artículo/Guía',
+  repo: 'Repositorio',
+  documento: 'Documento',
+};
+const TIPO_ICON = {
+  pdf: '📄',
+  libro: '📚',
+  web: '🧭',
+  repo: '📦',
+  documento: '📝',
+};
+const TIPO_ORDER = ['pdf', 'libro', 'web', 'repo', 'documento'];
+
 export default function RouteED1() {
   const navigate = useNavigate();
 
@@ -34,9 +50,16 @@ export default function RouteED1() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
   const [sessionId, setSessionId] = useState(null);
-  const [summary, setSummary] = useState([]); // /route/summary → [{block_id, total_option, correct_option}]
-  const [totals, setTotals] = useState({ total: 0, correct: 0, pct: 0 }); // /results/me
-  const [byDiff, setByDiff] = useState([]); // /results/me byDifficulty opcional
+  const [summary, setSummary] = useState([]); // [{block_id, block_title, total_option, correct_option}]
+  const [totals, setTotals] = useState({ total: 0, correct: 0, pct: 0 });
+  const [byDiff, setByDiff] = useState([]);
+
+  // Recursos (slide-over)
+  const [openBlock, setOpenBlock] = useState(null);
+  const [openBlockTitle, setOpenBlockTitle] = useState('');
+  const [resLoading, setResLoading] = useState(false);
+  const [resErr, setResErr] = useState('');
+  const [resources, setResources] = useState([]); // excluye videos en backend
 
   // Redirección si no hay sesión
   useEffect(() => {
@@ -76,9 +99,55 @@ export default function RouteED1() {
     return () => { alive = false; };
   }, [isAuthed, token, navigate]);
 
+  // Abrir slide-over de recursos
+  useEffect(() => {
+    let alive = true;
+    if (!openBlock) return;
+    (async () => {
+      setResLoading(true); setResErr(''); setResources([]);
+      try {
+        const headers = { Authorization: `Bearer ${token}` };
+        const { data } = await axios.get(`${API}/api/ed1/route/resources`, {
+          headers,
+          params: { blockId: openBlock, _t: Date.now() },
+        });
+        if (!alive) return;
+        setResources(Array.isArray(data?.items) ? data.items : []);
+      } catch (e) {
+        if (!alive) return;
+        setResErr(e?.response?.data?.error || 'No se pudieron cargar los recursos');
+      } finally {
+        if (alive) setResLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [openBlock, token]);
+
   // Derivados
   const incorrect = Math.max(0, (totals.total || 0) - (totals.correct || 0));
   const hasResults = (totals.total || 0) > 0;
+
+  // Agrupar recursos por tipo y ordenar
+  const groupedResources = useMemo(() => {
+    const g = {};
+    for (const r of resources) {
+      const t = r.tipo || 'documento';
+      (g[t] ||= []).push(r);
+    }
+    // ordenar cada grupo por rank y título
+    for (const k of Object.keys(g)) {
+      g[k].sort((a, b) => (a.rank ?? 999) - (b.rank ?? 999) || String(a.title).localeCompare(String(b.title)));
+    }
+    return g;
+  }, [resources]);
+
+  const orderedGroups = useMemo(() => {
+    const keys = Object.keys(groupedResources);
+    return keys.sort((a, b) => {
+      const ia = TIPO_ORDER.indexOf(a); const ib = TIPO_ORDER.indexOf(b);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    });
+  }, [groupedResources]);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100">
@@ -127,7 +196,7 @@ export default function RouteED1() {
         {loading && (
           <div className="grid md:grid-cols-3 gap-4">
             {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="rounded-2xl border bg-white p-4 animate-pulse">
+              <div key={i} className="rounded-2l border bg-white p-4 animate-pulse">
                 <div className="h-8 w-24 bg-slate-200 rounded mb-2" />
                 <div className="h-4 w-32 bg-slate-200 rounded" />
               </div>
@@ -163,7 +232,7 @@ export default function RouteED1() {
             </section>
 
             {/* Sugerencia si no hay resultados */}
-            {!hasResults && (
+            {!(totals.total > 0) && (
               <div className="rounded-2xl border bg-white shadow-sm p-5">
                 <div className="text-lg font-bold mb-1">Aún no tienes resultados para ED I</div>
                 <p className="text-slate-600 mb-3">
@@ -221,14 +290,15 @@ export default function RouteED1() {
                     const total = Number(b.total_option || 0);
                     const correct = Number(b.correct_option || 0);
                     const pct = total ? Math.round((correct / total) * 100) : 0;
+                    const titulo = b.block_title || `Bloque ${i + 1}`;
                     return (
                       <div key={b.block_id || i} className="rounded-xl border p-4">
                         <div className="flex items-center justify-between mb-2">
-                          <div className="inline-flex items-center gap-2">
-                            <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 text-xs">
+                          <div className="inline-flex items-center gap-2 min-w-0">
+                            <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 text-xs shrink-0">
                               {i + 1}
                             </span>
-                            <div className="font-semibold">Bloque {i + 1}</div>
+                            <div className="font-semibold truncate">{titulo}</div>
                           </div>
                           <div className="text-sm text-slate-600">{correct}/{total} correctas</div>
                         </div>
@@ -250,6 +320,16 @@ export default function RouteED1() {
                           ) : (
                             <div className="text-rose-700">🔴 Débil. Empieza por los apuntes introductorios de este bloque.</div>
                           )}
+                        </div>
+
+                        {/* Botón de recursos */}
+                        <div className="mt-3">
+                          <button
+                            onClick={() => { setOpenBlock(b.block_id); setOpenBlockTitle(titulo); }}
+                            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border hover:bg-slate-50 text-sm"
+                          >
+                            📚 Ver recursos
+                          </button>
                         </div>
                       </div>
                     );
@@ -282,6 +362,136 @@ export default function RouteED1() {
           </>
         )}
       </main>
+
+      {/* Slide-over de recursos (panel lateral) */}
+      {/* Fondo */}
+      {openBlock && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40"
+          onClick={() => setOpenBlock(null)}
+          aria-hidden="true"
+        />
+      )}
+      {/* Panel */}
+      <aside
+        className={cx(
+          'fixed right-0 top-0 z-50 h-full w-full max-w-xl bg-white shadow-2xl border-l transform transition-transform',
+          openBlock ? 'translate-x-0' : 'translate-x-full'
+        )}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Recursos recomendados"
+      >
+        <div className="h-full flex flex-col">
+          {/* Header */}
+          <div className="px-4 py-3 border-b flex items-center justify-between">
+            <div className="min-w-0">
+              <h3 className="font-bold truncate">Recursos — {openBlockTitle || 'Bloque'}</h3>
+              <p className="text-xs text-slate-500">Videos excluidos · fuentes en español cuando es posible</p>
+            </div>
+            <button
+              onClick={() => setOpenBlock(null)}
+              className="px-3 py-1.5 rounded-lg border bg-white hover:bg-slate-50"
+              aria-label="Cerrar"
+            >
+              ✕
+            </button>
+          </div>
+
+          {/* Contenido */}
+          <div className="flex-1 overflow-y-auto p-4">
+            {resLoading && <div className="text-slate-600">Cargando recursos…</div>}
+            {resErr && (
+              <div className="p-3 rounded-xl border bg-rose-50 text-rose-800">{resErr}</div>
+            )}
+
+            {!resLoading && !resErr && resources.length === 0 && (
+              <div className="rounded-xl border bg-slate-50 text-slate-700 p-4">
+                Aún no hay recursos registrados para este bloque.
+              </div>
+            )}
+
+            {!resLoading && !resErr && resources.length > 0 && (
+              <div className="space-y-6">
+                {orderedGroups.map((tipo) => (
+                  <section key={tipo}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-xl">{TIPO_ICON[tipo] || '🔗'}</span>
+                      <h4 className="font-semibold">{TIPO_LABEL[tipo] || 'Recurso'}</h4>
+                    </div>
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      {groupedResources[tipo].map((r) => (
+                        <article
+                          key={r.id}
+                          className="rounded-xl border bg-white hover:shadow-sm transition-shadow overflow-hidden"
+                        >
+                          {/* Thumb opcional */}
+                          {r.thumb ? (
+                            <a href={r.url} target="_blank" rel="noreferrer" className="block">
+                              <img
+                                src={r.thumb}
+                                alt=""
+                                className="w-full h-32 object-cover"
+                                onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                              />
+                            </a>
+                          ) : null}
+
+                          <div className="p-3">
+                            <div className="flex items-start gap-2">
+                              <div className="h-8 w-8 rounded-lg bg-slate-100 grid place-items-center text-lg shrink-0">
+                                {TIPO_ICON[tipo] || '🔗'}
+                              </div>
+                              <div className="min-w-0">
+                                <a
+                                  href={r.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="font-semibold hover:underline line-clamp-2"
+                                  title={r.title}
+                                >
+                                  {r.title}
+                                </a>
+                                <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+                                  {r.provider && (
+                                    <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
+                                      {r.provider}
+                                    </span>
+                                  )}
+                                  <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">
+                                    {TIPO_LABEL[tipo] || 'Recurso'}
+                                  </span>
+                                  {Number.isFinite(r.rank) && (
+                                    <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
+                                      prioridad {r.rank}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="px-4 py-3 border-t">
+            <div className="flex justify-end">
+              <button
+                onClick={() => setOpenBlock(null)}
+                className="px-3 py-2 rounded-lg border bg-white hover:bg-slate-50"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      </aside>
     </div>
   );
 }

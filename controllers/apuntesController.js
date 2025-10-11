@@ -1,150 +1,211 @@
-// controllers/apuntesController.js
-const path = require('path');
-const fs = require('fs');
-const { pool } = require('../db');
+// routes/apuntes.js
+const express = require('express');
+const multer = require('multer');
 
-/* Util */
-function parseTags(input) {
-  if (!input) return [];
-  if (Array.isArray(input)) return input.filter(Boolean);
-  if (typeof input === 'string') {
-    const s = input.trim();
-    if (!s) return [];
-    try {
-      const parsed = JSON.parse(s);
-      if (Array.isArray(parsed)) return parsed.filter(Boolean);
-    } catch {
-      // CSV fallback
-      return s.split(',').map(t => t.trim()).filter(Boolean);
-    }
-  }
-  return [];
+const { getSupabase } = require('../supabase'); // para URL firmadas si usas Storage
+const { authenticate } = require('../middleware/auth');
+
+// Controllers de DB (tu archivo)
+const {
+  listarApuntes,
+  obtenerApunte,
+  crearApunte,   // lo usaremos DESPUÉS de subir al storage
+  borrarApunte
+} = require('../controllers/apuntesController');
+
+const router = express.Router();
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB
+});
+
+const BUCKET = process.env.SUPABASE_BUCKET || 'Apuntes';
+
+/* ---------- helpers ---------- */
+
+const getExt = (n='') => (String(n).toLowerCase().match(/\.([a-z0-9]+)$/i)?.[1] || '');
+const isInlineMime = (mime='') => /^image\/|^application\/pdf$/i.test(mime);
+
+function slugifyBase(name = 'archivo') {
+  const base = String(name).replace(/\.[^.]+$/, '');
+  const clean = base
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/[^a-zA-Z0-9._-]/g, '')
+    .replace(/-+/g, '-')
+    .slice(0, 80)
+    .trim();
+  return clean || 'archivo';
+}
+function buildObjectKey(userId, originalName) {
+  const ext = getExt(originalName) || 'bin';
+  const base = slugifyBase(originalName);
+  return `${userId}/apuntes/${Date.now()}-${base}.${ext}`;
 }
 
-/* GET /apuntes?subject=slug&q=texto&page=1&limit=20 */
-async function listarApuntes(req, res) {
+/* ---------- Rutas ---------- */
+
+/** GET /apuntes — lista (usa tu controller) */
+router.get('/', listarApuntes);
+
+/** GET /apuntes/:id — detalle (usa tu controller) */
+router.get('/:id', obtenerApunte);
+
+/**
+ * POST /apuntes — crea apunte
+ * - Si viene archivo (multipart), lo subimos a Supabase Storage con nombre saneado
+ *   y luego llamamos a tu controller `crearApunte` con file_path/mime/size.
+ * - Si no hay archivo, permite JSON con resource_url o file_path ya resuelto.
+ */
+router.post('/', authenticate, upload.single('file'), async (req, res) => {
   try {
-    const { subject, q, page = '1', limit = '50' } = req.query || {};
-    const p = Math.max(parseInt(page, 10) || 1, 1);
-    const l = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
+    const { id: userId, username } = req.user || {};
+    if (!userId) return res.status(401).json({ error: 'No autenticado' });
 
-    const conds = [];
-    const params = [];
-    if (subject) {
-      conds.push(`subject_slug = $${params.push(subject)}`);
-    }
-    if (q) {
-      conds.push(`(titulo ILIKE $${params.push(`%${q}%`)} OR descripcion ILIKE $${params.push(`%${q}%`)})`);
-    }
+    // Si trae archivo, subimos a Storage
+    if (req.file) {
+      const supabase = getSupabase();
+      const key = buildObjectKey(userId, req.file.originalname);
 
-    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
-    const sql = `
-      SELECT id, titulo, descripcion, autor, subject_slug, visibilidad, tags,
-             resource_url, file_path, file_mime, file_size, creado_en
-        FROM apuntes
-        ${where}
-       ORDER BY COALESCE(creado_en, now()) DESC, id DESC
-       LIMIT $${params.push(l)} OFFSET $${params.push((p-1)*l)}
-    `;
-    const { rows } = await pool.query(sql, params);
-    res.json(rows);
-  } catch (e) {
-    console.error('Error al leer apuntes:', e);
-    res.status(500).json({ error: 'No se pudieron leer los apuntes' });
-  }
-}
+      const { error: upErr } = await supabase
+        .storage
+        .from(BUCKET)
+        .upload(key, req.file.buffer, {
+          cacheControl: '3600',
+          upsert: false,
+          contentType: req.file.mimetype || 'application/octet-stream'
+        });
 
-/* GET /apuntes/:id */
-async function obtenerApunte(req, res) {
-  try {
-    const { id } = req.params;
-    const { rows } = await pool.query(
-      `SELECT id, titulo, descripcion, autor, subject_slug, visibilidad, tags,
-              resource_url, file_path, file_mime, file_size, creado_en
-         FROM apuntes
-        WHERE id = $1`,
-      [id]
-    );
-    if (!rows.length) return res.status(404).json({ error: 'Apunte no encontrado' });
-    res.json(rows[0]);
-  } catch (e) {
-    console.error('Error al leer apunte:', e);
-    res.status(500).json({ error: 'No se pudo leer el apunte' });
-  }
-}
-
-/* POST /apuntes  (JSON o multipart/form-data) */
-async function crearApunte(req, res) {
-  try {
-    const body = req.body || {};
-    const {
-      titulo = '',
-      descripcion = '',
-      autor = null,
-      subject_slug = null,
-      visibilidad = 'public',
-      tags,
-      resource_url,
-      file_path,
-      file_mime,
-      file_size
-    } = body;
-
-    if (!titulo.trim()) return res.status(400).json({ error: 'titulo es requerido' });
-    if (!descripcion.trim()) return res.status(400).json({ error: 'descripcion es requerida' });
-
-    const tagsArr = parseTags(tags);
-    const urlFinal = resource_url || file_path || null;
-
-    const { rows } = await pool.query(
-      `INSERT INTO apuntes (
-         titulo, descripcion, autor,
-         subject_slug, visibilidad, tags,
-         resource_url, file_path, file_mime, file_size,
-         creado_en
-       )
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now())
-       RETURNING id, titulo, descripcion, autor, subject_slug, visibilidad, tags,
-                 resource_url, file_path, file_mime, file_size, creado_en`,
-      [
-        titulo, descripcion, autor,
-        subject_slug, visibilidad, JSON.stringify(tagsArr),
-        urlFinal, file_path || null, file_mime || null, file_size || null
-      ]
-    );
-
-    res.status(201).json(rows[0]);
-  } catch (e) {
-    console.error('Error al crear apunte:', e);
-    res.status(500).json({ error: 'No se pudo crear el apunte' });
-  }
-}
-
-/* DELETE /apuntes/:id */
-async function borrarApunte(req, res) {
-  try {
-    const { id } = req.params;
-
-    // Tomamos ruta del archivo (si existe) para intentar borrarlo del disco
-    const prev = await pool.query(`SELECT file_path FROM apuntes WHERE id=$1`, [id]);
-    const { rowCount } = await pool.query(`DELETE FROM apuntes WHERE id=$1`, [id]);
-
-    if (!rowCount) return res.status(404).json({ error: 'Apunte no encontrado' });
-
-    // Si el archivo es local (/uploads/...), intentamos borrarlo
-    try {
-      const filePath = prev.rows?.[0]?.file_path;
-      if (filePath && filePath.startsWith('/uploads/')) {
-        const abs = path.join(__dirname, '..', filePath);
-        fs.unlink(abs, () => {}); // no rompas si no existe
+      if (upErr) {
+        // Fallback nombre simple
+        const fallbackKey = `${userId}/apuntes/${Date.now()}-archivo.${getExt(req.file.originalname) || 'bin'}`;
+        const retry = await supabase
+          .storage
+          .from(BUCKET)
+          .upload(fallbackKey, req.file.buffer, {
+            cacheControl: '3600',
+            upsert: false,
+            contentType: req.file.mimetype || 'application/octet-stream'
+          });
+        if (retry.error) {
+          console.error('[Storage upload error]', upErr, retry.error);
+          return res.status(500).json({ error: 'Error subiendo archivo a Storage' });
+        }
+        // Reemplaza por fallback
+        req.body.file_path = fallbackKey;
+      } else {
+        req.body.file_path = key;
       }
-    } catch {}
 
-    res.json({ ok: true });
+      req.body.file_mime = req.file.mimetype || null;
+      req.body.file_size = req.file.size || null;
+      // autor por defecto al username
+      if (!req.body.autor) req.body.autor = username || null;
+    }
+
+    // Llama tu controller para insertar en DB con lo que haya en req.body
+    return crearApunte(req, res);
   } catch (e) {
-    console.error('Error al borrar apunte:', e);
-    res.status(500).json({ error: 'No se pudo borrar el apunte' });
+    console.error('[POST /apuntes] error', e);
+    return res.status(500).json({ error: 'Error inesperado al crear apunte' });
   }
-}
+});
 
-module.exports = { listarApuntes, obtenerApunte, crearApunte, borrarApunte };
+/**
+ * GET /apuntes/:id/url — devuelve { url, mime }
+ * Compatible con:
+ *  - resource_url (externo)
+ *  - file_path de Supabase Storage (firma URL)
+ *  - file_path local /uploads/...
+ */
+router.get('/:id/url', async (req, res) => {
+  try {
+    // reutilizamos tu controller para obtener datos del apunte
+    const fakeRes = {
+      _json: null,
+      status: () => fakeRes,
+      json: (x) => { fakeRes._json = x; return x; }
+    };
+    await obtenerApunte(req, fakeRes);
+    const row = fakeRes._json;
+    if (!row || row.error) return res.status(row?.status || 404).json(row || { error: 'No existe' });
+
+    // 1) Si hay resource_url externo
+    if (row.resource_url) {
+      return res.json({ url: row.resource_url, mime: row.file_mime || null });
+    }
+
+    // 2) Si hay file_path local (/uploads/...)
+    if (row.file_path && String(row.file_path).startsWith('/uploads/')) {
+      const absUrl = `${req.protocol}://${req.get('host')}${row.file_path}`;
+      return res.json({ url: absUrl, mime: row.file_mime || null });
+    }
+
+    // 3) Si hay file_path de Supabase Storage (key tipo "user/apuntes/...")
+    if (row.file_path && !/^https?:\/\//i.test(row.file_path)) {
+      const supabase = getSupabase();
+      const { data: signed, error: signErr } =
+        await supabase.storage.from(BUCKET).createSignedUrl(row.file_path, 60 * 60, {
+          // si quieres forzar descarga, usa { download: 'nombre.ext' }
+        });
+      if (!signErr && signed?.signedUrl) {
+        return res.json({ url: signed.signedUrl, mime: row.file_mime || null });
+      }
+      // fallback público (si el bucket fuera público)
+      const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(row.file_path);
+      if (pub?.publicUrl) return res.json({ url: pub.publicUrl, mime: row.file_mime || null });
+    }
+
+    return res.status(404).json({ error: 'No hay URL disponible' });
+  } catch (e) {
+    console.error('[GET /apuntes/:id/url] error', e);
+    return res.status(500).json({ error: 'Error inesperado' });
+  }
+});
+
+/**
+ * GET /apuntes/:id/file — redirige a la URL (soporta ?download=1)
+ */
+router.get('/:id/file', async (req, res) => {
+  try {
+    const forceDownload = String(req.query.download || '') === '1';
+
+    const fakeRes = {
+      _json: null,
+      status: () => fakeRes,
+      json: (x) => { fakeRes._json = x; return x; }
+    };
+    await obtenerApunte(req, fakeRes);
+    const row = fakeRes._json;
+    if (!row || row.error) return res.status(row?.status || 404).json(row || { error: 'No existe' });
+
+    if (row.resource_url) return res.redirect(302, row.resource_url);
+
+    if (row.file_path && String(row.file_path).startsWith('/uploads/')) {
+      const absUrl = `${req.protocol}://${req.get('host')}${row.file_path}`;
+      return res.redirect(302, absUrl);
+    }
+
+    if (row.file_path && !/^https?:\/\//i.test(row.file_path)) {
+      const supabase = getSupabase();
+      const opts = forceDownload ? { download: row.file_path.split('/').pop() || 'archivo' } : {};
+      const { data: signed, error: signErr } =
+        await supabase.storage.from(BUCKET).createSignedUrl(row.file_path, 60 * 60, opts);
+      if (!signErr && signed?.signedUrl) return res.redirect(302, signed.signedUrl);
+
+      const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(row.file_path);
+      if (pub?.publicUrl) return res.redirect(302, pub.publicUrl);
+    }
+
+    return res.status(404).json({ error: 'El apunte no tiene archivo' });
+  } catch (e) {
+    console.error('[GET /apuntes/:id/file] error', e);
+    return res.status(500).json({ error: 'Error inesperado' });
+  }
+});
+
+/** DELETE /apuntes/:id — usa tu controller (borra en DB y quita local si /uploads/...) */
+router.delete('/:id', authenticate, borrarApunte);
+
+module.exports = router;

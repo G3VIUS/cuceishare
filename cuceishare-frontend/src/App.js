@@ -21,9 +21,12 @@ import RouteED1 from './pages/RouteED1';
 import PreEvalGeneric from './pages/PreEvalGeneric';
 import RouteGeneric from './pages/RouteGeneric';
 
-// 📚 Guías y explicaciones (nuevas páginas)
+// 📚 Guías y explicaciones
 import ContentTopic from './pages/ContentTopic';
 import ContentQuestion from './pages/ContentQuestion';
+
+// ✏️ Editor de apunte
+import EditApunte from './pages/EditApunte';
 
 // ---- Protecciones ----
 function ProtectedRoute({ children }) {
@@ -67,6 +70,25 @@ export default function App() {
             }
           />
 
+          {/* ✏️ Editar apunte (ruta oficial en singular) */}
+          <Route
+            path="/apunte/:id/editar"
+            element={
+              <ProtectedRoute>
+                <EditApunte />
+              </ProtectedRoute>
+            }
+          />
+          {/* Compatibilidad con plural (por si hay enlaces viejos) */}
+          <Route
+            path="/apuntes/:id/editar"
+            element={
+              <ProtectedRoute>
+                <EditApunte />
+              </ProtectedRoute>
+            }
+          />
+
           {/* Aprendizaje: ED1 (legacy) */}
           <Route
             path="/pre-eval/ed1"
@@ -103,7 +125,7 @@ export default function App() {
             }
           />
 
-          {/* 📚 Guías (filtradas por bloque) y 💡 Explicaciones por pregunta */}
+          {/* 📚 Guías y 💡 Explicaciones */}
           <Route
             path="/content/:subjectSlug/topic/:blockId"
             element={

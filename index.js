@@ -5,6 +5,9 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 
+// ✅ si necesitas usar Supabase en este archivo, el path correcto desde la raíz es:
+const { getSupabase } = require('./supabase');
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -12,53 +15,68 @@ const PORT = process.env.PORT || 3001;
    Middlewares globales
    ======================= */
 
-app.set('trust proxy', 1); // opcional, útil si estás detrás de un proxy
+// Si corres detrás de proxy/reverse-proxy
+app.set('trust proxy', 1);
 
-// CORS (ajusta el origen si hace falta)
+// CORS (ajusta origin si usas otro puerto/host para el frontend)
 app.use(
   cors({
     origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
 
-// Parsers
-app.use(express.json());
+// Parsers (JSON y x-www-form-urlencoded)
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Estáticos: sirve archivos subidos localmente (para visualizar apuntes)
+// Archivos estáticos locales (si aún sirves algo desde /uploads)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 /* =======================
    Rutas
    ======================= */
 
-// CRUD de apuntes (con soporte de archivo en routes/apuntes.js)
+// ⚠️ Importante: como montamos bajo "/apuntes",
+// dentro de routes/apuntes.js debe usarse router.post('/') (NO '/apuntes')
 app.use('/apuntes', require('./routes/apuntes'));
 
-// Autenticación (usuarios, perfiles, JWT)
+// Auth (login/register/me) — tu router actual
 app.use('/auth', require('./routes/auth'));
 
-// Pre-evaluación / Ruta de aprendizaje ED I (legacy / compat)
+// Rutas legacy o por materia
 app.use('/api/ed1', require('./routes/route-ed1'));
-
-// ✅ Router genérico por materia (ej: /api/administracion-servidores/pre-eval)
-app.use('/api/:subject', require('./routes/route-subject'));
+app.use('/api/:subject', require('./routes/route-subject')); // si tu router espera :subject
 
 /* =======================
    Healthcheck y raíz
    ======================= */
+
 app.get('/', (_req, res) => {
   res.send('🎓 CUCEIShare API funcionando');
 });
 
-app.get('/healthz', (_req, res) => {
-  res.json({ ok: true, env: process.env.NODE_ENV || 'development' });
+app.get('/healthz', async (_req, res) => {
+  // Check rápido a Supabase (opcional, no truena si falla)
+  try {
+    const supabase = getSupabase();
+    // consulta mínima para verificar credenciales (no lee datos)
+    const { error } = await supabase.from('apuntes').select('id', { count: 'exact' }).range(0, 0);
+    if (error) {
+      return res.status(200).json({ ok: true, supabase: 'error', detail: error.message });
+    }
+    return res.json({ ok: true, supabase: 'ok' });
+  } catch (e) {
+    return res.status(200).json({ ok: true, supabase: 'not-configured', detail: e.message });
+  }
 });
 
 /* =======================
    404 (después de TODAS las rutas)
    ======================= */
+
 app.use((req, _res, next) => {
   const err = new Error(`No encontrado: ${req.method} ${req.originalUrl}`);
   err.status = 404;
@@ -68,8 +86,8 @@ app.use((req, _res, next) => {
 /* =======================
    Handler de errores (último middleware)
    ======================= */
+
 app.use((err, _req, res, _next) => {
-  // Si ya se enviaron los headers, no intentes responder otra vez
   if (res.headersSent || res.writableEnded) {
     console.error('[post-response error]', err);
     return;
@@ -77,7 +95,6 @@ app.use((err, _req, res, _next) => {
 
   const status = err.status || 500;
 
-  // Log más ruidoso si es 5xx
   if (status >= 500) {
     console.error(err);
   } else {
@@ -95,12 +112,13 @@ app.use((err, _req, res, _next) => {
 /* =======================
    Iniciar servidor
    ======================= */
+
 app.listen(PORT, () => {
   console.log(`🚀 Backend listo en http://localhost:${PORT}`);
   console.log(`🔐 CORS_ORIGIN: ${process.env.CORS_ORIGIN || 'http://localhost:3000'}`);
 });
 
-// (Opcional) logs de promesas no manejadas para depurar
+// Debug util de promesas/errores no manejados
 process.on('unhandledRejection', (reason) => {
   console.error('[unhandledRejection]', reason);
 });

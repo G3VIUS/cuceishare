@@ -30,9 +30,13 @@ function prettySize(bytes) {
 
 export default function VistaApunte() {
   const { id } = useParams();
+
   const [item, setItem] = useState(null);
+  const [fileUrl, setFileUrl] = useState('');
+  const [fileMime, setFileMime] = useState('');
   const [err, setErr] = useState('');
 
+  // 1) Carga metadatos del apunte
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -48,24 +52,32 @@ export default function VistaApunte() {
     return () => { alive = false; };
   }, [id]);
 
-  const fileUrl = useMemo(() => {
-    if (!item) return '';
-    const raw =
-      item.resource_url ||
-      item.file_path ||         // por si tienes registros viejos
-      '';
-    if (!raw) return '';
-
-    // Si viene absoluta (http/https), úsala tal cual
-    if (/^https?:\/\//i.test(raw)) return raw;
-
-    // Si viene relativa (ej. /uploads/archivo.pdf), prefija con API
-    // Evita doble slash: `${API}${raw}` ya que raw empieza con '/'
-    return `${API}${raw}`;
-  }, [item]);
+  // 2) Pide al backend la URL renderizable (pública o firmada)
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch(`${API}/apuntes/${id}/url`);
+        const j = await r.json();
+        if (!r.ok || !j?.url) throw new Error(j?.error || 'No hay URL del archivo');
+        if (!alive) return;
+        setFileUrl(j.url);
+        setFileMime(j.mime || item?.file_mime || '');
+      } catch (e) {
+        // No detiene la vista: seguimos mostrando los metadatos y botones Abrir/Descargar
+        if (!alive) return;
+        setFileUrl('');
+        setFileMime(item?.file_mime || '');
+        // Solo mostrar error si no hay nada que abrir
+        if (!item?.resource_url) setErr((prev) => prev || e.message);
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   const kind = useMemo(() => {
-    const mime = item?.file_mime || '';
+    const mime = fileMime || item?.file_mime || '';
     const url = fileUrl || '';
     return {
       image: isImage(mime, url),
@@ -73,9 +85,9 @@ export default function VistaApunte() {
       audio: isAudio(mime, url),
       video: isVideo(mime, url),
     };
-  }, [item, fileUrl]);
+  }, [fileMime, fileUrl, item]);
 
-  if (err) return <div className="p-6 text-rose-700">⚠️ {err}</div>;
+  if (err && !item) return <div className="p-6 text-rose-700">⚠️ {err}</div>;
   if (!item) return <div className="p-6">Cargando…</div>;
 
   return (
@@ -96,9 +108,7 @@ export default function VistaApunte() {
       </div>
 
       {/* Descripción */}
-      {item.descripcion && (
-        <p className="text-slate-700">{item.descripcion}</p>
-      )}
+      {item.descripcion && <p className="text-slate-700">{item.descripcion}</p>}
 
       {/* Metadatos */}
       <div className="text-sm text-slate-600 flex flex-wrap gap-3">
@@ -108,7 +118,7 @@ export default function VistaApunte() {
           </span>
         )}
         <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 text-slate-700">
-          🏷️ {Array.isArray(item.tags) ? item.tags.join(', ') : 'sin tags'}
+          🏷️ {Array.isArray(item.tags) ? item.tags.join(', ') : (item.tags ?? 'sin tags')}
         </span>
         <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 text-slate-700">
           🧾 {item.file_mime || 'tipo desconocido'}
@@ -126,16 +136,24 @@ export default function VistaApunte() {
       {/* Visor */}
       {!fileUrl ? (
         <div className="p-4 border rounded-2xl bg-amber-50 text-amber-800">
-          No hay archivo/URL asociado a este apunte.
+          No hay vista previa disponible. Usa “Abrir recurso”.
         </div>
       ) : kind.image ? (
         <div className="border rounded-2xl overflow-hidden">
-          {/* eslint-disable-next-line jsx-a11y/img-redundant-alt */}
-          <img src={fileUrl} alt="Vista del apunte" className="w-full" />
+          <img
+            src={fileUrl}
+            alt="Vista del apunte"
+            className="w-full"
+            onError={() => setErr('No se pudo renderizar la imagen')}
+          />
         </div>
       ) : kind.pdf ? (
         <div className="border rounded-2xl overflow-hidden h-[75vh]">
-          <iframe title="PDF" src={fileUrl} className="w-full h-full" />
+          <iframe
+            title="PDF"
+            src={fileUrl}
+            className="w-full h-full"
+          />
         </div>
       ) : kind.audio ? (
         <div className="p-4 border rounded-2xl bg-white">
@@ -154,16 +172,15 @@ export default function VistaApunte() {
           </div>
           <div className="flex gap-2">
             <a
-              href={fileUrl}
+              href={`${API}/apuntes/${id}/file`}
               target="_blank"
-              rel="noreferrer"
+              rel="noopener"
               className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700"
             >
               🔗 Abrir en nueva pestaña
             </a>
             <a
-              href={fileUrl}
-              download={item.file_name || item.titulo || `apunte-${item.id}`}
+              href={`${API}/apuntes/${id}/file?download=1`}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50"
             >
               ⬇️ Descargar
@@ -173,25 +190,22 @@ export default function VistaApunte() {
       )}
 
       {/* Acciones rápidas */}
-      {fileUrl && (
-        <div className="flex flex-wrap gap-2">
-          <a
-            href={fileUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border hover:bg-slate-50"
-          >
-            🔗 Abrir recurso
-          </a>
-          <a
-            href={fileUrl}
-            download={item.file_name || item.titulo || `apunte-${item.id}`}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border hover:bg-slate-50"
-          >
-            ⬇️ Descargar
-          </a>
-        </div>
-      )}
+      <div className="flex flex-wrap gap-2">
+        <a
+          href={`${API}/apuntes/${id}/file`}
+          target="_blank"
+          rel="noopener"
+          className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border hover:bg-slate-50"
+        >
+          🔗 Abrir recurso
+        </a>
+        <a
+          href={`${API}/apuntes/${id}/file?download=1`}
+          className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border hover:bg-slate-50"
+        >
+          ⬇️ Descargar
+        </a>
+      </div>
     </div>
   );
 }

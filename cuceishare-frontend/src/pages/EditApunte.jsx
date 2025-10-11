@@ -35,28 +35,25 @@ export default function EditApunte() {
 
   // sesión / headers
   const token = localStorage.getItem("token");
-  const headers = useMemo(() => {
-    const h = { "Content-Type": "application/json" };
-    if (token) h["Authorization"] = `Bearer ${token}`;
-    return h;
-  }, [token]);
+  const authHeader = useMemo(
+    () => (token ? { Authorization: `Bearer ${token}` } : {}),
+    [token]
+  );
 
   // estado
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
 
   const [form, setForm] = useState({
     titulo: "",
     descripcion: "",
-    materia: "",
-    semestre: "",
-    etiquetas: "",
-    recurso_url: "",     // URL externa o la que devuelva la subida
-    publico: true,
+    subject_slug: "",
+    tagsCsv: "",
+    resource_url: "",
+    visibilidad: "public", // 'public' | 'private'
   });
 
   // archivo seleccionado (opcional)
@@ -70,21 +67,24 @@ export default function EditApunte() {
       setLoading(true);
       setError("");
       try {
-        const r = await fetch(`${API}/apuntes/${id}`, { headers });
+        const r = await fetch(`${API}/apuntes/${id}`, { headers: authHeader });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
 
         if (!alive) return;
+        const tagsArray = Array.isArray(j.tags)
+          ? j.tags
+          : typeof j.tags === "string"
+          ? j.tags.split(",").map(s => s.trim()).filter(Boolean)
+          : [];
+
         setForm({
-          titulo: j.titulo ?? j.title ?? "",
-          descripcion: j.descripcion ?? j.description ?? "",
-          materia: j.materia ?? j.subject ?? "",
-          semestre: String(j.semestre ?? j.semester ?? ""),
-          etiquetas: Array.isArray(j.etiquetas ?? j.tags)
-            ? (j.etiquetas ?? j.tags).join(", ")
-            : (j.etiquetas ?? j.tags ?? ""),
-          recurso_url: j.recurso_url ?? j.url ?? j.file_url ?? "",
-          publico: typeof j.publico === "boolean" ? j.publico : (j.is_public ?? true),
+          titulo: j.titulo ?? "",
+          descripcion: j.descripcion ?? "",
+          subject_slug: j.subject_slug ?? "",
+          tagsCsv: tagsArray.join(", "),
+          resource_url: j.resource_url ?? j.file_url ?? "",
+          visibilidad: j.visibilidad ?? "public",
         });
       } catch (e) {
         setError(e.message || "No se pudo cargar el apunte");
@@ -93,11 +93,11 @@ export default function EditApunte() {
       }
     })();
     return () => { alive = false; };
-  }, [API, headers, id]);
+  }, [API, authHeader, id]);
 
   function onChange(e) {
-    const { name, value, type, checked } = e.target;
-    setForm(prev => ({ ...prev, [name]: type === "checkbox" ? checked : value }));
+    const { name, value } = e.target;
+    setForm(prev => ({ ...prev, [name]: value }));
   }
 
   // === Drag & Drop ===
@@ -125,27 +125,6 @@ export default function EditApunte() {
     setFile(f);
   }
 
-  async function uploadIfNeeded() {
-    if (!file) return null; // nada que subir
-    const fd = new FormData();
-    fd.append("file", file);
-    setUploading(true);
-    try {
-      // Ajusta el endpoint si tu backend usa otro:
-      const r = await fetch(`${API}/apuntes/${id}/archivo`, {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        body: fd,
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
-      // Esperamos { url: "https://..." }
-      return j?.url || j?.file_url || j?.location || null;
-    } finally {
-      setUploading(false);
-    }
-  }
-
   async function onSave(e) {
     e?.preventDefault?.();
     setError(""); setSaved("");
@@ -155,34 +134,52 @@ export default function EditApunte() {
     try {
       setSaving(true);
 
-      // 1) subir archivo si hay
-      const uploadedUrl = await uploadIfNeeded();
-      const finalUrl = uploadedUrl || form.recurso_url || null;
+      // Prepara tags como array (jsonb)
+      const tags = form.tagsCsv
+        ? form.tagsCsv.split(",").map(s => s.trim()).filter(Boolean)
+        : [];
 
-      // 2) guardar metadata
-      const payload = {
-        titulo: form.titulo,
-        descripcion: form.descripcion,
-        materia: form.materia || null,
-        semestre: form.semestre ? Number(form.semestre) : null,
-        etiquetas: form.etiquetas
-          ? form.etiquetas.split(",").map(s => s.trim()).filter(Boolean)
-          : [],
-        recurso_url: finalUrl,
-        publico: !!form.publico,
-      };
+      // Si hay archivo -> usar FormData y PUT multipart
+      // Si no hay archivo -> JSON plano
+      let r, j;
 
-      const r = await fetch(`${API}/apuntes/${id}`, {
-        method: "PUT",
-        headers,
-        body: JSON.stringify(payload),
-      });
-      const j = await r.json().catch(() => ({}));
+      if (file) {
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("titulo", form.titulo);
+        fd.append("descripcion", form.descripcion);
+        if (form.subject_slug) fd.append("subject_slug", form.subject_slug);
+        fd.append("visibilidad", form.visibilidad || "public");
+        fd.append("tags", JSON.stringify(tags));
+        // Si mandas archivo nuevo, el backend anula resource_url
+
+        r = await fetch(`${API}/apuntes/${id}`, {
+          method: "PUT",
+          headers: authHeader, // ¡NO pongas Content-Type aquí!
+          body: fd,
+        });
+      } else {
+        const payload = {
+          titulo: form.titulo,
+          descripcion: form.descripcion,
+          subject_slug: form.subject_slug || null,
+          visibilidad: form.visibilidad || "public",
+          tags,
+          resource_url: form.resource_url || null,
+        };
+        r = await fetch(`${API}/apuntes/${id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", ...authHeader },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
 
-      setSaved("Cambios guardados ✅");
-      setFile(null); // limpiar file seleccionado
-      setTimeout(() => setSaved(""), 1800);
+      // ✅ Navega al perfil al guardar
+      navigate("/perfil", { replace: true });
+
     } catch (e) {
       setError(e.message || "No se pudo guardar");
     } finally {
@@ -194,7 +191,10 @@ export default function EditApunte() {
     if (!window.confirm("¿Eliminar este apunte? Esta acción no se puede deshacer.")) return;
     try {
       setDeleting(true);
-      const r = await fetch(`${API}/apuntes/${id}`, { method: "DELETE", headers });
+      const r = await fetch(`${API}/apuntes/${id}`, {
+        method: "DELETE",
+        headers: authHeader,
+      });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
       navigate("/perfil", { replace: true });
@@ -249,8 +249,8 @@ export default function EditApunte() {
           <div className="space-y-1">
             <label className="text-sm font-medium">Materia</label>
             <select
-              name="materia"
-              value={form.materia}
+              name="subject_slug"
+              value={form.subject_slug}
               onChange={onChange}
               className="w-full px-3 py-2 rounded-lg border bg-white"
             >
@@ -260,17 +260,15 @@ export default function EditApunte() {
           </div>
 
           <div className="space-y-1">
-            <label className="text-sm font-medium">Semestre</label>
+            <label className="text-sm font-medium">Visibilidad</label>
             <select
-              name="semestre"
-              value={form.semestre}
+              name="visibilidad"
+              value={form.visibilidad}
               onChange={onChange}
               className="w-full px-3 py-2 rounded-lg border bg-white"
             >
-              <option value="">—</option>
-              {Array.from({ length: 12 }, (_, i) => i + 1).map(n => (
-                <option key={n} value={n}>{n}</option>
-              ))}
+              <option value="public">Pública</option>
+              <option value="private">Privada</option>
             </select>
           </div>
         </div>
@@ -278,8 +276,8 @@ export default function EditApunte() {
         <div className="space-y-1">
           <label className="text-sm font-medium">Etiquetas (separadas por coma)</label>
           <input
-            name="etiquetas"
-            value={form.etiquetas}
+            name="tagsCsv"
+            value={form.tagsCsv}
             onChange={onChange}
             className="w-full px-3 py-2 rounded-lg border"
             placeholder="redes, dns, dhcp"
@@ -289,17 +287,17 @@ export default function EditApunte() {
         <div className="space-y-1">
           <label className="text-sm font-medium">URL del recurso (PDF/Drive/GitHub)</label>
           <input
-            name="recurso_url"
-            value={form.recurso_url}
+            name="resource_url"
+            value={form.resource_url}
             onChange={onChange}
             className="w-full px-3 py-2 rounded-lg border"
             placeholder="https://…/mi_apunte.pdf"
             disabled={!!file} // si elige archivo, bloquea el campo (opcional)
           />
-          {form.recurso_url && !file && (
+          {form.resource_url && !file && (
             <a
               className="text-sm text-indigo-700 underline"
-              href={form.recurso_url}
+              href={form.resource_url}
               target="_blank" rel="noreferrer"
             >
               Abrir recurso
@@ -307,7 +305,7 @@ export default function EditApunte() {
           )}
         </div>
 
-        {/* === Área de archivo (drag & drop) + Consejos === */}
+        {/* === Área de archivo (drag & drop) === */}
         <div className="grid md:grid-cols-[1fr_220px] gap-4">
           <div
             onDrop={onDrop}
@@ -349,10 +347,6 @@ export default function EditApunte() {
                 </button>
               </div>
             )}
-
-            {uploading && (
-              <div className="mt-3 text-sm text-slate-600">Subiendo archivo…</div>
-            )}
           </div>
 
           <aside className="p-4 rounded-2xl border bg-slate-50 text-sm">
@@ -366,24 +360,13 @@ export default function EditApunte() {
           </aside>
         </div>
 
-        <label className="inline-flex items-center gap-2 select-none">
-          <input
-            type="checkbox"
-            name="publico"
-            checked={form.publico}
-            onChange={onChange}
-            className="h-4 w-4"
-          />
-          <span className="text-sm">Público (visible para todos)</span>
-        </label>
-
         <div className="flex flex-wrap gap-3 pt-2">
           <button
             type="submit"
-            disabled={saving || uploading}
-            className={`px-4 py-2 rounded-xl text-white font-semibold ${saving || uploading ? "bg-green-400" : "bg-green-600 hover:bg-green-700"}`}
+            disabled={saving}
+            className={`px-4 py-2 rounded-xl text-white font-semibold ${saving ? "bg-green-400" : "bg-green-600 hover:bg-green-700"}`}
           >
-            {saving ? "Guardando…" : uploading ? "Subiendo…" : "Guardar cambios"}
+            {saving ? "Guardando…" : "Guardar cambios"}
           </button>
           <button
             type="button"

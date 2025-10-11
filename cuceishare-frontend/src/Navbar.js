@@ -1,74 +1,57 @@
 // src/Navbar.jsx
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 
-// -- Materias por defecto (3 actuales) --
-const SUBJECTS_DEFAULT = [
+const SUBJECTS = [
   { slug: 'ed1', nombre: 'Estructuras de Datos I' },
   { slug: 'administracion-servidores', nombre: 'Administración de Servidores' },
   { slug: 'mineria-datos', nombre: 'Minería de Datos' },
 ];
-
-// Permite sobrescribir la lista desde .env con:
-// REACT_APP_SUBJECTS="ed1:Estructuras de Datos I,administracion-servidores:Administración de Servidores,mineria-datos:Minería de Datos"
-function getSubjectsFromEnv() {
-  const raw = process.env.REACT_APP_SUBJECTS || '';
-  if (!raw.trim()) return SUBJECTS_DEFAULT;
-  try {
-    const items = raw.split(',').map(s => s.trim()).filter(Boolean);
-    const parsed = items.map(item => {
-      const [slug, ...rest] = item.split(':');
-      return { slug: slug?.trim(), nombre: rest.join(':').trim() || slug?.trim() };
-    }).filter(x => x.slug);
-    return parsed.length ? parsed : SUBJECTS_DEFAULT;
-  } catch {
-    return SUBJECTS_DEFAULT;
-  }
-}
-
-const SUBJECTS = getSubjectsFromEnv();
 const LS_SUBJECT = 'lastSubjectSlug';
 
 export default function Navbar() {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [subjectOpen, setSubjectOpen] = useState(false);
   const navigate = useNavigate();
   const { pathname } = useLocation();
 
-  // --- sesión ---
+  // sesión
   const token = localStorage.getItem('token');
   const legacyUser = localStorage.getItem('usuario');
   const isAuthed = !!token || !!legacyUser;
-  const isAuthPage = pathname === '/login' || pathname === '/register';
 
-  // --- detectar subject desde URL ---
+  // subject inicial (URL -> LS -> fallback)
   const initialSubject = useMemo(() => {
     const parts = pathname.split('/').filter(Boolean);
-    let slugFromUrl = null;
-    // soporta varias rutas con :subjectSlug
-    if (['pre-eval', 'ruta', 'content', 'practice'].includes(parts[0])) {
-      slugFromUrl = parts[1] || null;
-    }
+    const slugFromUrl =
+      ['pre-eval', 'ruta', 'content', 'practice'].includes(parts[0]) ? parts[1] : null;
     const stored = localStorage.getItem(LS_SUBJECT);
-    const fallback = SUBJECTS[0]?.slug || 'ed1';
+    const fallback = SUBJECTS[0].slug;
     const candidate = slugFromUrl || stored || fallback;
     return SUBJECTS.some(s => s.slug === candidate) ? candidate : fallback;
   }, [pathname]);
 
   const [subject, setSubject] = useState(initialSubject);
 
+  // persiste selección
   useEffect(() => {
     localStorage.setItem(LS_SUBJECT, subject);
   }, [subject]);
 
-  const currentSubject =
-    SUBJECTS.find(s => s.slug === subject) || SUBJECTS[0] || { slug: 'ed1', nombre: 'Estructuras de Datos I' };
+  // sincroniza si entras directo a otra materia por URL
+  useEffect(() => {
+    const parts = pathname.split('/').filter(Boolean);
+    const slugFromUrl =
+      ['pre-eval', 'ruta', 'content', 'practice'].includes(parts[0]) ? parts[1] : null;
+    if (slugFromUrl && SUBJECTS.some(s => s.slug === slugFromUrl) && slugFromUrl !== subject) {
+      setSubject(slugFromUrl);
+    }
+  }, [pathname, subject]);
 
-  // --- estilos ---
-  const linkBase = 'hover:text-purple-700 transition-colors';
-  const active = 'text-purple-700 font-semibold';
+  const current = SUBJECTS.find(s => s.slug === subject) ?? SUBJECTS[0];
 
-  // --- acciones ---
+  const goPreEval = () => navigate(`/pre-eval/${current.slug}`);
+  const goRuta    = () => navigate(`/ruta/${current.slug}`);
+  const goBuscar  = () => navigate(`/buscar?materia=${current.slug}`);
+
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('usuario');
@@ -79,171 +62,71 @@ export default function Navbar() {
     navigate('/login');
   };
 
-  const goPreEval = () => navigate(`/pre-eval/${currentSubject.slug}`);
-  const goRuta = () => navigate(`/ruta/${currentSubject.slug}`);
-
-  // Cierra dropdowns al navegar entre páginas
-  useEffect(() => {
-    setMenuOpen(false);
-    setSubjectOpen(false);
-  }, [pathname]);
-
   return (
-    <nav className="bg-white shadow-md sticky top-0 z-40">
-      <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-        {/* Logo */}
-        <Link to="/" className="text-xl font-bold text-purple-700 flex items-center gap-2">
-          🎓 CUCEIShare
+    <header className="sticky top-0 z-40 backdrop-blur supports-[backdrop-filter]:bg-white/70 bg-white/90 border-b">
+      <nav className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
+        {/* marca */}
+        <Link to="/" className="text-[15px] font-semibold tracking-tight text-slate-900">
+          CUCEIShare
         </Link>
 
-        {/* Materia (desktop) */}
-        {isAuthed && SUBJECTS.length > 0 && (
-          <div className="hidden md:flex items-center gap-3">
-            <div className="relative">
-              <button
-                onClick={() => setSubjectOpen(o => !o)}
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border bg-white hover:bg-slate-50"
-                aria-haspopup="listbox"
-                aria-expanded={subjectOpen}
-                title="Seleccionar materia"
-              >
-                📚 {currentSubject.nombre}
-                <span className="text-slate-400">▾</span>
-              </button>
-              {subjectOpen && (
-                <div
-                  className="absolute left-0 mt-2 w-80 rounded-xl border bg-white shadow-lg p-2"
-                  onMouseLeave={() => setSubjectOpen(false)}
-                >
-                  <ul role="listbox" className="max-h-64 overflow-auto">
-                    {SUBJECTS.map(s => (
-                      <li key={s.slug}>
-                        <button
-                          role="option"
-                          onClick={() => { setSubjectOpen(false); setSubject(s.slug); }}
-                          className={`w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 ${
-                            s.slug === subject ? 'bg-slate-100 font-semibold' : ''
-                          }`}
-                        >
-                          {s.nombre}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-
-            <button
-              onClick={goPreEval}
-              className="px-3 py-1.5 rounded-xl bg-indigo-600 text-white font-medium shadow-sm hover:bg-indigo-700"
-              title="Ir a la pre-evaluación de la materia seleccionada"
+        {/* selector de materia */}
+        {SUBJECTS.length > 0 && (
+          <div className="flex items-center gap-2">
+            <label htmlFor="subject" className="sr-only">Materia</label>
+            <select
+              id="subject"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              className="text-sm border rounded-md px-2 py-1 bg-white"
             >
-              📊 Pre-evaluación
-            </button>
-            <button
-              onClick={goRuta}
-              className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white font-medium shadow-sm hover:bg-emerald-700"
-              title="Ir a mi ruta para la materia seleccionada"
-            >
-              🗺️ Mi ruta
-            </button>
+              {SUBJECTS.map(s => (
+                <option key={s.slug} value={s.slug}>{s.nombre}</option>
+              ))}
+            </select>
           </div>
         )}
 
-        {/* Hamburguesa (móvil) */}
-        <button
-          onClick={() => setMenuOpen(o => !o)}
-          className="md:hidden text-2xl"
-          aria-label="Abrir menú"
-        >
-          ☰
-        </button>
-      </div>
+        {/* acciones */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={goPreEval}
+            className="text-sm px-3 py-1.5 rounded-md border hover:bg-slate-50"
+            title="Pre-evaluación"
+          >
+            Pre-evaluación
+          </button>
+          <button
+            onClick={goRuta}
+            className="text-sm px-3 py-1.5 rounded-md bg-slate-900 text-white hover:bg-black"
+            title="Mi ruta"
+          >
+            Mi ruta
+          </button>
+          <button
+            onClick={goBuscar}
+            className="text-sm px-3 py-1.5 rounded-md border hover:bg-slate-50"
+            title="Explorar apuntes"
+          >
+            Apuntes
+          </button>
 
-      {/* Menú responsive */}
-      <div className={`md:hidden ${menuOpen ? 'block' : 'hidden'} border-t`}>
-        <div className="px-4 py-3 flex flex-col gap-3 font-medium">
-          {/* Sin sesión */}
-          {!isAuthed && (
-            <>
-              {isAuthPage ? (
-                <>
-                  {pathname === '/login' && <Link to="/register" className={linkBase}>🆕 Registro</Link>}
-                  {pathname === '/register' && <Link to="/login" className={linkBase}>🔑 Login</Link>}
-                </>
-              ) : (
-                <>
-                  <Link to="/" className={`${linkBase} ${pathname==='/'?active:''}`}>🏠 Inicio</Link>
-                  <Link to="/buscar" className={`${linkBase} ${pathname==='/buscar'?active:''}`}>🔍 Buscar</Link>
-                  <Link to="/login" className={`${linkBase} ${pathname==='/login'?active:''}`}>🔑 Login</Link>
-                  <Link to="/register" className={`${linkBase} ${pathname==='/register'?active:''}`}>🆕 Registro</Link>
-                </>
-              )}
-            </>
-          )}
-
-          {/* Con sesión */}
-          {isAuthed && (
-            <>
-              <Link to="/" className={`${linkBase} ${pathname==='/'?active:''}`}>🏠 Inicio</Link>
-              <Link to="/buscar" className={`${linkBase} ${pathname==='/buscar'?active:''}`}>🔍 Buscar</Link>
-              <Link to="/subir" className={`${linkBase} ${pathname==='/subir'?active:''}`}>📝 Subir Apunte</Link>
-              <Link to="/perfil" className={`${linkBase} ${pathname==='/perfil'?active:''}`}>👤 Perfil</Link>
-
-              {/* Selector de materia (móvil) */}
-              {SUBJECTS.length > 0 && (
-                <div className="pt-2 border-t">
-                  <div className="text-xs text-slate-500 mb-1">Materia</div>
-                  <select
-                    className="w-full px-3 py-2 rounded-lg border bg-white"
-                    value={subject}
-                    onChange={(e) => setSubject(e.target.value)}
-                  >
-                    {SUBJECTS.map(s => (
-                      <option key={s.slug} value={s.slug}>{s.nombre}</option>
-                    ))}
-                  </select>
-                  <div className="mt-2 flex flex-col gap-2">
-                    <button
-                      onClick={() => { setMenuOpen(false); goPreEval(); }}
-                      className="w-full px-3 py-2 rounded-lg bg-indigo-600 text-white"
-                    >
-                      📊 Pre-evaluación
-                    </button>
-                    <button
-                      onClick={() => { setMenuOpen(false); goRuta(); }}
-                      className="w-full px-3 py-2 rounded-lg bg-emerald-600 text-white"
-                    >
-                      🗺️ Mi ruta
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              <button onClick={handleLogout} className="mt-2 text-left hover:text-red-600 font-semibold">
-                🚪 Cerrar sesión
-              </button>
-            </>
+          {/* sesión */}
+          {isAuthed ? (
+            <button
+              onClick={handleLogout}
+              className="text-sm text-slate-500 hover:text-slate-900 ml-1"
+              title="Cerrar sesión"
+            >
+              Salir
+            </button>
+          ) : (
+            <Link to="/login" className="text-sm text-slate-500 hover:text-slate-900 ml-1">
+              Entrar
+            </Link>
           )}
         </div>
-      </div>
-
-      {/* Barra inferior (desktop) */}
-      <div className="hidden md:block border-t">
-        <div className="max-w-7xl mx-auto px-4 py-2 flex items-center gap-6 text-sm">
-          <Link to="/" className={`${linkBase} ${pathname==='/'?active:''}`}>🏠 Inicio</Link>
-          <Link to="/buscar" className={`${linkBase} ${pathname==='/buscar'?active:''}`}>🔍 Buscar</Link>
-          <Link to="/subir" className={`${linkBase} ${pathname==='/subir'?active:''}`}>📝 Subir Apunte</Link>
-          <Link to="/perfil" className={`${linkBase} ${pathname==='/perfil'?active:''}`}>👤 Perfil</Link>
-          {!isAuthed && (
-            <>
-              <Link to="/login" className={`${linkBase} ${pathname==='/login'?active:''}`}>🔑 Login</Link>
-              <Link to="/register" className={`${linkBase} ${pathname==='/register'?active:''}`}>🆕 Registro</Link>
-            </>
-          )}
-        </div>
-      </div>
-    </nav>
+      </nav>
+    </header>
   );
 }

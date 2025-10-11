@@ -183,16 +183,15 @@ router.post('/attempts', authenticate, async (req, res) => {
       const sessHasUser   = await tableHasColumn('attempt_sessions', 'user_id');
       const sessHasSubId  = await tableHasColumn('attempt_sessions', 'subject_id');
       const sessHasQuiz   = await tableHasColumn('attempt_sessions', 'quiz_id');
-      const sessHasCAt    = await tableHasColumn('attempt_sessions', 'created_at');
+      const sessHasCAt    = await tableHasColumn('attempt_sessions', 'started_at');
       const sessUserType  = sessHasUser  ? await getColumnType('attempt_sessions', 'user_id')   : null;
       const sessSubIdType = sessHasSubId ? await getColumnType('attempt_sessions', 'subject_id'): null;
       const sessQuizType  = sessHasQuiz  ? await getColumnType('attempt_sessions', 'quiz_id')   : null;
-      const sessQuizNotNull = sessHasQuiz ? await isColumnNotNull('attempt_sessions', 'quiz_id') : false;
+      const sessQuizNotNull = await isColumnNotNull('attempt_sessions', 'quiz_id');
 
       // castear user_id para attempt_sessions
       let userIdForSess = userId;
       if (sessHasUser && sessUserType === 'uuid' && typeof userIdForSess === 'number') {
-        // poco probable en tu esquema
         userIdForSess = String(userIdForSess);
       }
       const userCastSess = sessHasUser
@@ -229,10 +228,10 @@ router.post('/attempts', authenticate, async (req, res) => {
           cols.push('subject_id'); vals.push(`$${params.push(subjectIdForSess)}${subjectCastSess}`);
         }
         if (sessHasQuiz) {
-          if (quizIdForSess == null) vals.push('null');
+          if (quizIdForSess == null) { /* null */ }
           else { cols.push('quiz_id'); vals.push(`$${params.push(quizIdForSess)}${quizCastSess}`); }
         }
-        if (sessHasCAt) { cols.push('created_at'); vals.push('now()'); }
+        if (sessHasCAt) { cols.push('started_at'); vals.push('now()'); }
 
         const sql = `
           insert into attempt_sessions (${cols.join(',')})
@@ -255,7 +254,7 @@ router.post('/attempts', authenticate, async (req, res) => {
           if (quizIdForSess == null) { /* nada */ }
           else { cols.push('quiz_id'); vals.push(`$${params.length+1}${quizCastSess}`); params.push(quizIdForSess); }
         }
-        if (sessHasCAt) { cols.push('created_at'); vals.push('now()'); }
+        if (sessHasCAt) { cols.push('started_at'); vals.push('now()'); }
 
         const sql = `
           insert into attempt_sessions (${cols.join(',')})
@@ -278,9 +277,7 @@ router.post('/attempts', authenticate, async (req, res) => {
       const vals = ['gen_random_uuid()'];
       const params = [];
 
-      // user_id
       if (hasUserId) { cols.push('user_id'); vals.push(`$${params.push(userId)}${userCastAttempts}`); }
-      // subject_id
       if (hasSubjectId) { cols.push('subject_id'); vals.push(`$${params.push(subjectId)}${subjectCastAttempts}`); }
 
       cols.push('block_id');     vals.push(`$${params.push(blockId)}::uuid`);
@@ -342,12 +339,12 @@ router.post('/attempts', authenticate, async (req, res) => {
 
 /* =========================================================
    GET /api/ed1/route/summary  (protegido)
-   ?sessionId=...  (opcional; si falta, tomamos la última del usuario)
+   ?sessionId=...  (opcional)
+   => incluye block_title y block_code
    ========================================================= */
 router.get('/route/summary', authenticate, async (req, res) => {
   const qSession = req.query.sessionId || null;
 
-  // user_id int
   let userId = req.user?.sub ?? req.user?.id ?? null;
   if (!userId) return res.status(401).json({ error: 'No autenticado' });
   if (typeof userId === 'string') {
@@ -357,7 +354,6 @@ router.get('/route/summary', authenticate, async (req, res) => {
   }
 
   try {
-    // resolver quiz y/o sesión
     const quizType = await getColumnType('attempt_sessions', 'quiz_id'); // 'uuid' esperado
     const quizId = await getQuizIdED1(quizType);
     if (!quizId) return res.status(500).json({ error: 'No se pudo resolver quiz_id (QUIZ_ED1_ID / slug).' });
@@ -376,7 +372,7 @@ router.get('/route/summary', authenticate, async (req, res) => {
       sessionId = r.rows[0].id;
     }
 
-    // === CONSISTENTE: último intento por pregunta (solo 'opcion') ===
+    // Agregamos título y code del bloque
     const { rows } = await pool.query(
       `
       with last_attempt as (
@@ -392,13 +388,16 @@ router.get('/route/summary', authenticate, async (req, res) => {
          order by a.question_id, a.created_at desc
       )
       select
-        la.block_id,
+        b.id   as block_id,
+        b.titulo as block_title,
+        b.code as block_code,
         count(*)                                   as total_option,
         count(*) filter (where la.correct)         as correct_option,
         0                                          as total_open
       from last_attempt la
-      group by la.block_id
-      order by la.block_id
+      join blocks b on b.id = la.block_id
+      group by b.id, b.titulo, b.code
+      order by b.code, b.titulo
       `,
       [sessionId]
     );
@@ -412,7 +411,7 @@ router.get('/route/summary', authenticate, async (req, res) => {
 
 /* =========================================================
    GET /api/ed1/results/me  (protegido)
-   ?sessionId=... (opcional; si falta, última del usuario)
+   ?sessionId=... (opcional)
    ========================================================= */
 router.get('/results/me', authenticate, async (req, res) => {
   const qSession = req.query.sessionId || null;
@@ -508,6 +507,33 @@ router.get('/results/me', authenticate, async (req, res) => {
   } catch (err) {
     console.error('[RESULTS /me] error:', err);
     res.status(500).json({ error: 'No se pudieron obtener resultados' });
+  }
+});
+
+/* =========================================================
+   GET /api/ed1/route/resources  (protegido)
+   Devuelve recursos para un bloque (EXCLUYE videos)
+   Params: ?blockId=UUID
+   ========================================================= */
+router.get('/route/resources', authenticate, async (req, res) => {
+  const blockId = req.query.blockId;
+  if (!blockId) return res.status(400).json({ error: 'Falta blockId' });
+
+  try {
+    const { rows } = await pool.query(
+      `
+      select r.id, r.block_id, r.title, r.url, r.tipo, r.provider, r.thumb, r.rank
+        from block_resources r
+       where r.block_id = $1::uuid
+         and (r.tipo is distinct from 'video')
+       order by coalesce(r.rank, 999), r.title
+      `,
+      [blockId]
+    );
+    res.json({ items: rows });
+  } catch (err) {
+    console.error('[ROUTE RESOURCES] error:', err);
+    res.status(500).json({ error: 'No se pudieron obtener los recursos' });
   }
 });
 
