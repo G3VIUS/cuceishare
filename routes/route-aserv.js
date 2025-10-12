@@ -1,4 +1,4 @@
-// routes/route-ed1.js
+// routes/route-aserv.js
 const express = require('express');
 const router = express.Router();
 
@@ -44,20 +44,15 @@ async function isColumnNotNull(table, col) {
   return String(r.rows[0].is_nullable).toUpperCase() === 'NO';
 }
 
-/* ---------- helpers de dominio (ED1 acepta varios slugs) ---------- */
-const SUBJECT_SLUGS_ED1 = [
-  'ed1',
-  'estructuras-de-datos-i',      // si tuvieras esta variante
-  'estructuras-de-datos-1',      // opcional
-  'estructuras-datos-i'          // opcional
-];
+/* ---------- helpers de dominio (ASERV acepta dos slugs) ---------- */
+const SUBJECT_SLUGS_ASERV = ['aserv', 'administracion-servidores'];
 
-/** Devuelve TODOS los subject_id que machan cualquiera de los slugs de ED1 */
-async function getSubjectIdsED1() {
+/** Devuelve TODOS los subject_id que machan cualquiera de los slugs de ASERV */
+async function getSubjectIdsASERV() {
   try {
     const { rows } = await pool.query(
       `select id, slug from subjects where slug = any($1::text[])`,
-      [SUBJECT_SLUGS_ED1]
+      [SUBJECT_SLUGS_ASERV]
     );
     return rows.map(r => r.id);
   } catch {
@@ -65,20 +60,20 @@ async function getSubjectIdsED1() {
   }
 }
 
-/** QUIZ ED1: usa .env QUIZ_ED1_ID si viene; si no, busca por slugs candidatos */
-async function getQuizIdED1(expectedType /* 'uuid' | 'integer' | 'text' */) {
-  if (process.env.QUIZ_ED1_ID?.trim()) {
-    const val = process.env.QUIZ_ED1_ID.trim();
+/** Si defines QUIZ_ASERV_ID en .env, lo usa. Si no, busca por múltiples slugs candidatos. */
+async function getQuizIdASERV(expectedType /* 'uuid'|'integer'|'text' */) {
+  if (process.env.QUIZ_ASERV_ID?.trim()) {
+    const val = process.env.QUIZ_ASERV_ID.trim();
     if (expectedType === 'integer') {
       const n = parseInt(val, 10);
       return Number.isFinite(n) ? n : null;
     }
-    return val; // uuid/text
+    return val;
   }
-  // Candidatos de slug para el quiz de ED1
+  // Candidatos de slug para quiz (incluye variantes de ambos slugs)
   const QUIZ_SLUGS = [
-    'ed1', 'ed1_pre', 'ed1-pre', 'pre-ed1',
-    'estructuras-de-datos-i', 'estructuras-de-datos-i_pre', 'estructuras-de-datos-i-pre', 'pre-estructuras-de-datos-i'
+    'aserv', 'aserv_pre', 'aserv-pre', 'pre-aserv',
+    'administracion-servidores', 'administracion-servidores_pre', 'administracion-servidores-pre', 'pre-administracion-servidores',
   ];
   try {
     const r = await pool.query(
@@ -99,11 +94,11 @@ async function getQuizIdED1(expectedType /* 'uuid' | 'integer' | 'text' */) {
 }
 
 /* =========================================================
-   GET /api/ed1/pre-eval  (protegido)
+   GET /api/aserv/pre-eval  (protegido)
    ========================================================= */
 router.get('/pre-eval', authenticate, async (_req, res) => {
   try {
-    const subjectIds = await getSubjectIdsED1(); // 0..n ids
+    const subjectIds = await getSubjectIdsASERV(); // puede traer 0, 1 o 2 ids
     let blks;
     if (subjectIds.length) {
       blks = await pool.query(
@@ -113,16 +108,16 @@ router.get('/pre-eval', authenticate, async (_req, res) => {
           order by code asc, titulo asc`,
         [subjectIds]
       );
-      console.log(`[ED1 /pre-eval] filtro subject_id IN, bloques=${blks.rowCount}, subjectIds=${subjectIds.join(',')}`);
+      console.log(`[ASERV /pre-eval] filtros por subject_id IN, bloques=${blks.rowCount}, subjectIds=${subjectIds.join(',')}`);
     } else {
-      // Fallback por prefijo si no hay subject_ids (ajusta prefijos según tu data)
+      // Fallback por prefijo si no hay subjectIds
       blks = await pool.query(
         `select id, code, titulo, subject_id
            from blocks
-          where code ilike 'ED%' or code ilike 'ED1%'
+          where code ilike 'AS%' or code ilike 'ADMIN%'
           order by code asc, titulo asc`
       );
-      console.log(`[ED1 /pre-eval] fallback por code ILIKE, bloques=${blks.rowCount}`);
+      console.log(`[ASERV /pre-eval] fallback por code ILIKE, bloques=${blks.rowCount}`);
     }
 
     const blockIds = blks.rows.map(b => b.id);
@@ -164,31 +159,28 @@ router.get('/pre-eval', authenticate, async (_req, res) => {
       } catch {}
     }
 
-    // “Principal” para payload (elige el primero si hay)
+    // Elegimos un subject “principal” para regresar en payload (el primero si hay)
     const subjectId = subjectIds[0] || null;
 
     res.json({
-      subject: { id: subjectId, slug: 'ed1', nombre: 'Estructuras de Datos I' },
+      subject: { id: subjectId, slug: 'aserv', nombre: 'Administración de Servidores' },
       blocks: blks.rows,
       questions: qs.rows,
       choices: chs.rows,
       openKeys: keys.rows,
     });
   } catch (err) {
-    console.error('[ED1 /pre-eval] error:', err);
+    console.error('[ASERV /pre-eval] error:', err);
     res.status(500).json({ error: 'No se pudo cargar la pre-evaluación' });
   }
 });
 
 /* =========================================================
-   POST /api/ed1/attempts  (protegido)
+   POST /api/aserv/attempts  (protegido)
    Body: { respuestas:[{ blockId, questionId, type, choiceId?, answerText? }] }
-   Opcional: sessionId (si no viene, creamos una nueva si existe attempt_sessions)
    ========================================================= */
 router.post('/attempts', authenticate, async (req, res) => {
-  const { sessionId: bodySession, respuestas = [] } = req.body;
-  const hdrSession = req.header('x-session-id') || null;
-  let effectiveSession = bodySession || hdrSession || null;
+  const { respuestas = [] } = req.body;
 
   let userId = req.user?.sub ?? req.user?.id ?? null;
   if (!userId) return res.status(401).json({ error: 'No autenticado' });
@@ -202,7 +194,6 @@ router.post('/attempts', authenticate, async (req, res) => {
   }
 
   try {
-    // introspección attempts.* (user_id/subject_id)
     const [hasUserId, hasSubjectId] = await Promise.all([
       tableHasColumn('attempts', 'user_id'),
       tableHasColumn('attempts', 'subject_id'),
@@ -215,19 +206,22 @@ router.post('/attempts', authenticate, async (req, res) => {
       ? (userColType === 'uuid' ? '::uuid' : (userColType === 'integer' ? '::int' : ''))
       : '';
 
-    const subjectIds = await getSubjectIdsED1();
-    const subjectId = hasSubjectId ? (subjectIds[0] || null) : null;
+    // subject_id: usa cualquiera de los subjectIds válidos (el primero)
+    const subjectIds = await getSubjectIdsASERV();
+    const subjectId = subjectIds[0] || null;
     const subjectCastAttempts = hasSubjectId
       ? (subjectColType === 'uuid' ? '::uuid' : (subjectColType === 'integer' ? '::int' : ''))
       : '';
 
-    // ===== attempt_sessions (si existe) =====
+    // attempt_sessions (si existe) + quiz_id
     const hasAttemptSessions = await (async () => {
       try {
         const r = await pool.query(`select to_regclass('public.attempt_sessions') rel`);
         return r.rows[0]?.rel !== null;
       } catch { return false; }
     })();
+
+    let effectiveSession = null;
 
     if (hasAttemptSessions) {
       const sessHasUser   = await tableHasColumn('attempt_sessions', 'user_id');
@@ -258,16 +252,16 @@ router.post('/attempts', authenticate, async (req, res) => {
       if (sessHasQuiz) {
         const quizType = sessQuizType || 'uuid';
         quizCastSess = quizType === 'uuid' ? '::uuid' : (quizType === 'integer' ? '::int' : '');
-        quizIdForSess = await getQuizIdED1(quizType);
+        quizIdForSess = await getQuizIdASERV(quizType);
         if (sessQuizNotNull && (quizIdForSess === null || typeof quizIdForSess === 'undefined')) {
           return res.status(500).json({
-            error: 'attempt_sessions.quiz_id es NOT NULL y no se resolvió. Define QUIZ_ED1_ID o crea un quiz con slug ed1/variantes.',
+            error: 'attempt_sessions.quiz_id es NOT NULL y no se resolvió. Define QUIZ_ASERV_ID o crea un quiz con slug aserv/administracion-servidores.',
           });
         }
       }
 
-      // Crear nueva sesión si no vino, o asegurarla si vino
-      if (!effectiveSession) {
+      // Crear nueva sesión
+      {
         const cols = [];
         const vals = [];
         const params = [];
@@ -290,27 +284,6 @@ router.post('/attempts', authenticate, async (req, res) => {
         `;
         const created = await pool.query(sql, params);
         effectiveSession = created.rows[0].id; // UUID
-      } else {
-        const cols = ['id'];
-        const vals = ['$1::uuid'];
-        const params = [effectiveSession];
-
-        if (sessHasUser)   { cols.push('user_id');   vals.push(`$${params.length+1}${userCastSess}`); params.push(userIdForSess); }
-        if (sessHasSubId && subjectIdForSess) {
-          cols.push('subject_id'); vals.push(`$${params.length+1}${subjectCastSess}`); params.push(subjectIdForSess);
-        }
-        if (sessHasQuiz) {
-          if (quizIdForSess == null) { /* nada */ }
-          else { cols.push('quiz_id'); vals.push(`$${params.length+1}${quizCastSess}`); params.push(quizIdForSess); }
-        }
-        if (sessHasCAt) { cols.push('started_at'); vals.push('now()'); }
-
-        const sql = `
-          insert into attempt_sessions (${cols.join(',')})
-          values (${vals.join(',')})
-          on conflict (id) do nothing
-        `;
-        await pool.query(sql, params);
       }
     }
 
@@ -380,15 +353,13 @@ router.post('/attempts', authenticate, async (req, res) => {
     res.json({ ok: true, saved: respuestas.length, sessionId: effectiveSession || null });
   } catch (err) {
     await pool.query('ROLLBACK');
-    console.error('[ED1 /attempts] error:', err);
+    console.error('[ASERV /attempts] error:', err);
     res.status(500).json({ error: 'No se pudieron guardar los intentos' });
   }
 });
 
 /* =========================================================
-   GET /api/ed1/route/summary  (protegido)
-   ?sessionId=...  (opcional)
-   => incluye block_title y block_code
+   GET /api/aserv/route/summary  (protegido)
    ========================================================= */
 router.get('/route/summary', authenticate, async (req, res) => {
   const qSession = req.query.sessionId || null;
@@ -403,8 +374,8 @@ router.get('/route/summary', authenticate, async (req, res) => {
 
   try {
     const quizType = await getColumnType('attempt_sessions', 'quiz_id'); // 'uuid' esperado
-    const quizId = await getQuizIdED1(quizType);
-    if (!quizId) return res.status(500).json({ error: 'No se pudo resolver quiz_id (QUIZ_ED1_ID / slug).' });
+    const quizId = await getQuizIdASERV(quizType);
+    if (!quizId) return res.status(500).json({ error: 'No se pudo resolver quiz_id (QUIZ_ASERV_ID / slug).' });
 
     let sessionId = qSession;
     if (!sessionId) {
@@ -451,14 +422,13 @@ router.get('/route/summary', authenticate, async (req, res) => {
 
     res.json({ sessionId, blocks: rows });
   } catch (err) {
-    console.error('[ED1 /route/summary] error:', err);
+    console.error('[ASERV /route/summary] error:', err);
     res.status(500).json({ error: 'No se pudo generar el resumen' });
   }
 });
 
 /* =========================================================
-   GET /api/ed1/results/me  (protegido)
-   ?sessionId=... (opcional)
+   GET /api/aserv/results/me  (protegido)
    ========================================================= */
 router.get('/results/me', authenticate, async (req, res) => {
   const qSession = req.query.sessionId || null;
@@ -473,8 +443,8 @@ router.get('/results/me', authenticate, async (req, res) => {
 
   try {
     const quizType = await getColumnType('attempt_sessions', 'quiz_id');
-    const quizId = await getQuizIdED1(quizType);
-    if (!quizId) return res.status(500).json({ error: 'No se pudo resolver quiz_id (QUIZ_ED1_ID / slug).' });
+    const quizId = await getQuizIdASERV(quizType);
+    if (!quizId) return res.status(500).json({ error: 'No se pudo resolver quiz_id (QUIZ_ASERV_ID / slug).' });
 
     let sessionId = qSession;
     if (!sessionId) {
@@ -550,15 +520,13 @@ router.get('/results/me', authenticate, async (req, res) => {
 
     return res.json({ sessionId, totals: { total, correct, pct }, byDifficulty });
   } catch (err) {
-    console.error('[ED1 /results/me] error:', err);
+    console.error('[ASERV /results/me] error:', err);
     res.status(500).json({ error: 'No se pudieron obtener resultados' });
   }
 });
 
 /* =========================================================
-   GET /api/ed1/route/resources  (protegido)
-   Devuelve recursos para un bloque (EXCLUYE videos)
-   Params: ?blockId=UUID
+   GET /api/aserv/route/resources  (protegido)
    ========================================================= */
 router.get('/route/resources', authenticate, async (req, res) => {
   const blockId = req.query.blockId;
@@ -577,7 +545,7 @@ router.get('/route/resources', authenticate, async (req, res) => {
     );
     res.json({ items: rows });
   } catch (err) {
-    console.error('[ED1 /route/resources] error:', err);
+    console.error('[ASERV /route/resources] error:', err);
     res.status(500).json({ error: 'No se pudieron obtener los recursos' });
   }
 });

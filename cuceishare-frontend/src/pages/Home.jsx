@@ -5,10 +5,32 @@ import { useEffect, useMemo, useState, useCallback } from 'react';
 /** tiny utility */
 const cx = (...xs) => xs.filter(Boolean).join(' ');
 
+// Cada materia puede tener un slug "visual" y un slug de ruta real
 const SUBJECTS = [
-  { slug: 'ed1', nombre: 'Estructuras de Datos I', desc: 'Ruta por bloques del programa oficial.' },
-  { slug: 'administracion-servidores', nombre: 'Administración de Servidores', desc: 'Unidades, servicios de red y seguridad.' },
-  { slug: 'mineria-datos', nombre: 'Minería de Datos', desc: 'Preparación, modelos y evaluación.' },
+  {
+    slug: 'ed1',
+    routeSlug: 'ed1',
+    preSlug: 'ed1',
+    nombre: 'Estructuras de Datos I',
+    desc: 'Ruta por bloques del programa oficial.',
+    comingSoon: false,
+  },
+  {
+    slug: 'administracion-servidores',   // identificador “humano”
+    routeSlug: 'aserv',                  // 👈 rutas reales existentes
+    preSlug: 'aserv',
+    nombre: 'Administración de Servidores',
+    desc: 'Unidades, servicios de red y seguridad.',
+    comingSoon: false,
+  },
+  {
+    slug: 'mineria-datos',
+    routeSlug: 'mineria',                // puedes cambiarlo cuando crees los archivos
+    preSlug: 'mineria',
+    nombre: 'Minería de Datos',
+    desc: 'Preparación, modelos y evaluación.',
+    comingSoon: true,                    // 👈 deshabilita CTAs hasta que exista
+  },
 ];
 
 const LS_SUBJECT = 'lastSubjectSlug';
@@ -25,7 +47,7 @@ export default function Home() {
   /** selección persistida */
   const initial = useMemo(() => {
     const stored = localStorage.getItem(LS_SUBJECT);
-    return subjects.some(s => s.slug === stored) ? stored : 'ed1';
+    return subjects.some(s => s.slug === stored) ? stored : subjects[0].slug;
   }, [subjects]);
 
   const [subject, setSubject] = useState(initial);
@@ -33,10 +55,10 @@ export default function Home() {
 
   const current = subjects.find(s => s.slug === subject) || subjects[0];
 
-  /** rutas segun materia */
-  const hrefRuta   = `/ruta/${current.slug}`;
-  const hrefPre    = `/pre-eval/${current.slug}`;
-  const hrefBuscar = `/buscar?materia=${current.slug}`;
+  /** rutas segun materia (usa routeSlug/preSlug reales) */
+  const hrefRuta   = `/ruta/${current.routeSlug}`;
+  const hrefPre    = `/pre-eval/${current.preSlug}`;
+  const hrefBuscar = `/buscar?materia=${current.routeSlug}`;
 
   /** accesos de usuario */
   const hrefPerfil = sesion ? '/perfil' : '/login';
@@ -44,12 +66,13 @@ export default function Home() {
 
   /** progreso guardado de la materia actual (opcional) */
   const hasProgress = useMemo(() => {
-    try { return !!JSON.parse(localStorage.getItem(`${current.slug}:preeval:resultados`)); }
+    try { return !!JSON.parse(localStorage.getItem(`${current.routeSlug}:preeval:resultados`)); }
     catch { return false; }
-  }, [current.slug]);
+  }, [current.routeSlug]);
 
   /** accesibilidad: manejar tabs con teclado */
-  const onKeySelect = useCallback((e, slug) => {
+  const onKeySelect = useCallback((e, slug, disabled) => {
+    if (disabled) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       setSubject(slug);
@@ -57,22 +80,24 @@ export default function Home() {
   }, []);
 
   /** estilos */
-  const btnPrimary = "inline-flex items-center justify-center rounded-xl bg-slate-900 text-white px-4 py-2.5 text-sm font-semibold shadow-sm hover:bg-black active:bg-black focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400";
-  const btnGhost   = "inline-flex items-center justify-center rounded-xl border px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 active:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300";
+  const btnPrimary = "inline-flex items-center justify-center rounded-xl bg-slate-900 text-white px-4 py-2.5 text-sm font-semibold shadow-sm hover:bg-black active:bg-black focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 disabled:opacity-50 disabled:cursor-not-allowed";
+  const btnGhost   = "inline-flex items-center justify-center rounded-xl border px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 active:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 disabled:opacity-50 disabled:cursor-not-allowed";
   const pill       = "inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 text-slate-700 text-xs";
 
-  const SegBtn = ({ value, label, active }) => (
+  const SegBtn = ({ value, label, active, disabled }) => (
     <button
       type="button"
-      onClick={() => setSubject(value)}
-      onKeyDown={(e) => onKeySelect(e, value)}
+      onClick={() => !disabled && setSubject(value)}
+      onKeyDown={(e) => onKeySelect(e, value, disabled)}
       role="tab"
       aria-selected={active}
+      aria-disabled={disabled}
       className={cx(
         "px-3 py-1.5 text-sm rounded-lg border transition",
-        active
+        disabled && "opacity-50 cursor-not-allowed",
+        !disabled && (active
           ? "bg-slate-900 text-white border-slate-900 shadow-sm"
-          : "bg-white text-slate-700 hover:bg-slate-50"
+          : "bg-white text-slate-700 hover:bg-slate-50")
       )}
     >
       {label}
@@ -118,15 +143,34 @@ export default function Home() {
                     </span>
                   </>
                 )}
+                {current.comingSoon && (
+                  <>
+                    <span className="text-slate-300">•</span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="h-2 w-2 rounded-full bg-amber-500" />
+                      Próximamente
+                    </span>
+                  </>
+                )}
               </div>
 
               {/* CTAs principales */}
               <div className="mt-6 flex flex-wrap gap-3">
-                <Link to={hrefRuta} className={btnPrimary}>Ir a mi ruta</Link>
-                <Link to={hrefPre} className={btnGhost}>Pre-evaluación</Link>
-                <Link to={hrefBuscar} className={btnGhost}>Explorar apuntes</Link>
-                <Link to={hrefSubir} className={btnGhost}>Subir apunte</Link>
-                <Link to={hrefPerfil} className={btnGhost}>{sesion ? 'Mi perfil' : 'Iniciar sesión'}</Link>
+                <Link to={hrefRuta} className={btnPrimary} aria-disabled={current.comingSoon} onClick={e=>{ if(current.comingSoon) e.preventDefault(); }}>
+                  Ir a mi ruta
+                </Link>
+                <Link to={hrefPre} className={btnGhost} aria-disabled={current.comingSoon} onClick={e=>{ if(current.comingSoon) e.preventDefault(); }}>
+                  Pre-evaluación
+                </Link>
+                <Link to={hrefBuscar} className={btnGhost}>
+                  Explorar apuntes
+                </Link>
+                <Link to={hrefSubir} className={btnGhost}>
+                  Subir apunte
+                </Link>
+                <Link to={hrefPerfil} className={btnGhost}>
+                  {sesion ? 'Mi perfil' : 'Iniciar sesión'}
+                </Link>
               </div>
             </div>
 
@@ -139,7 +183,13 @@ export default function Home() {
                 className="flex gap-1.5 rounded-lg p-1 bg-slate-50 border"
               >
                 {subjects.map(s => (
-                  <SegBtn key={s.slug} value={s.slug} label={s.nombre} active={subject === s.slug} />
+                  <SegBtn
+                    key={s.slug}
+                    value={s.slug}
+                    label={s.nombre}
+                    active={subject === s.slug}
+                    disabled={s.comingSoon}
+                  />
                 ))}
               </div>
             </div>
@@ -173,7 +223,7 @@ export default function Home() {
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {subjects.map((m) => {
             const progress = (() => {
-              try { return !!JSON.parse(localStorage.getItem(`${m.slug}:preeval:resultados`)); }
+              try { return !!JSON.parse(localStorage.getItem(`${m.routeSlug}:preeval:resultados`)); }
               catch { return false; }
             })();
             const active = subject === m.slug;
@@ -189,10 +239,10 @@ export default function Home() {
                 <header className="flex items-start justify-between gap-3">
                   <button
                     type="button"
-                    onClick={() => setSubject(m.slug)}
-                    onKeyDown={(e) => onKeySelect(e, m.slug)}
-                    className="text-left"
-                    title="Usar esta materia en los botones principales"
+                    onClick={() => !m.comingSoon && setSubject(m.slug)}
+                    onKeyDown={(e) => onKeySelect(e, m.slug, m.comingSoon)}
+                    className={cx("text-left", m.comingSoon && "opacity-60 cursor-not-allowed")}
+                    title={m.comingSoon ? 'Próximamente' : 'Usar esta materia en los botones principales'}
                   >
                     <h3 className="text-base font-semibold leading-tight">{m.nombre}</h3>
                     <p className="mt-1 text-sm text-slate-600">{m.desc}</p>
@@ -204,13 +254,31 @@ export default function Home() {
                         Progreso
                       </span>
                     )}
-                    {active && <span className="text-[11px] text-indigo-600 font-medium">Activo</span>}
+                    {m.comingSoon ? (
+                      <span className="text-[11px] text-amber-600 font-medium">Próx.</span>
+                    ) : active ? (
+                      <span className="text-[11px] text-indigo-600 font-medium">Activo</span>
+                    ) : null}
                   </div>
                 </header>
 
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Link to={`/ruta/${m.slug}`} className={btnPrimary}>Ruta</Link>
-                  <Link to={`/pre-eval/${m.slug}`} className={btnGhost}>Pre-evaluación</Link>
+                  <Link
+                    to={`/ruta/${m.routeSlug}`}
+                    className={btnPrimary}
+                    aria-disabled={m.comingSoon}
+                    onClick={(e)=>{ if(m.comingSoon) e.preventDefault(); }}
+                  >
+                    Ruta
+                  </Link>
+                  <Link
+                    to={`/pre-eval/${m.preSlug}`}
+                    className={btnGhost}
+                    aria-disabled={m.comingSoon}
+                    onClick={(e)=>{ if(m.comingSoon) e.preventDefault(); }}
+                  >
+                    Pre-evaluación
+                  </Link>
                 </div>
               </article>
             );
@@ -233,17 +301,21 @@ export default function Home() {
               <div className="text-xs text-slate-500">Materia</div>
               <div role="tablist" className="flex gap-1.5 rounded-lg p-1 bg-slate-50 border">
                 {subjects.map(s => (
-                  <SegBtn key={s.slug} value={s.slug} label={s.nombre} active={subject === s.slug} />
+                  <SegBtn key={s.slug} value={s.slug} label={s.nombre} active={subject === s.slug} disabled={s.comingSoon} />
                 ))}
               </div>
             </div>
           </div>
 
           <div className="flex flex-wrap gap-3">
-            <Link to={hrefRuta} className={btnPrimary}>Ir a mi ruta</Link>
-            <Link to={hrefPre} className={btnGhost}>Pre-evaluación</Link>
+            <Link to={hrefRuta} className={btnPrimary} aria-disabled={current.comingSoon} onClick={e=>{ if(current.comingSoon) e.preventDefault(); }}>
+              Ir a mi ruta
+            </Link>
+            <Link to={hrefPre} className={btnGhost} aria-disabled={current.comingSoon} onClick={e=>{ if(current.comingSoon) e.preventDefault(); }}>
+              Pre-evaluación
+            </Link>
             <Link to={hrefBuscar} className={btnGhost}>Explorar apuntes</Link>
-            <Link to={hrefSubir} className={btnGhost}>Subir apunte</Link>
+            <Link to={hrefSubir} className={btnGhost}>{sesion ? 'Subir apunte' : 'Inicia sesión para subir'}</Link>
             <Link to={hrefPerfil} className={btnGhost}>{sesion ? 'Mi perfil' : 'Iniciar sesión'}</Link>
           </div>
 

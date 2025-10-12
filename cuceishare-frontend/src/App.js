@@ -4,7 +4,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 // Layout
 import Navbar from './Navbar';
 
-// Páginas
+// Páginas base
 import Home from './pages/Home';
 import Buscar from './pages/Buscar';
 import SubirApunte from './pages/SubirApunte';
@@ -13,20 +13,17 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import Perfil from './pages/Perfil';
 
-// ED1 (compat)
+// ✏️ Editor de apunte
+import EditApunte from './pages/EditApunte';
+
+// ===== Materias con archivos individuales =====
+// ED1
 import PreEvalED1 from './pages/PreEvalED1';
 import RouteED1 from './pages/RouteED1';
 
-// Genéricas por materia
-import PreEvalGeneric from './pages/PreEvalGeneric';
-import RouteGeneric from './pages/RouteGeneric';
-
-// 📚 Guías y explicaciones
-import ContentTopic from './pages/ContentTopic';
-import ContentQuestion from './pages/ContentQuestion';
-
-// ✏️ Editor de apunte
-import EditApunte from './pages/EditApunte';
+// Administración de Servidores (ASERV)
+import PreEvalAdminServ from './pages/PreEvalAdminServ';
+import RouteAdminServ from './pages/RouteAdminServ';
 
 // ---- Protecciones ----
 function ProtectedRoute({ children }) {
@@ -52,7 +49,7 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
 
-          {/* Protegidas (compatibilidad) */}
+          {/* Protegidas */}
           <Route
             path="/subir"
             element={
@@ -70,7 +67,7 @@ export default function App() {
             }
           />
 
-          {/* ✏️ Editar apunte (ruta oficial en singular) */}
+          {/* ✏️ Editar apunte */}
           <Route
             path="/apunte/:id/editar"
             element={
@@ -79,7 +76,7 @@ export default function App() {
               </ProtectedRoute>
             }
           />
-          {/* Compatibilidad con plural (por si hay enlaces viejos) */}
+          {/* Compat plural (enlaces viejos) */}
           <Route
             path="/apuntes/:id/editar"
             element={
@@ -89,7 +86,8 @@ export default function App() {
             }
           />
 
-          {/* Aprendizaje: ED1 (legacy) */}
+          {/* ===== Aprendizaje por materia ===== */}
+          {/* ED1 */}
           <Route
             path="/pre-eval/ed1"
             element={
@@ -107,38 +105,20 @@ export default function App() {
             }
           />
 
-          {/* 🔥 Aprendizaje: Genérico por materia */}
+          {/* Administración de Servidores (ASERV) */}
           <Route
-            path="/pre-eval/:subjectSlug"
+            path="/pre-eval/aserv"
             element={
               <ProtectedRouteToken>
-                <PreEvalGeneric />
+                <PreEvalAdminServ />
               </ProtectedRouteToken>
             }
           />
           <Route
-            path="/ruta/:subjectSlug"
+            path="/ruta/aserv"
             element={
               <ProtectedRouteToken>
-                <RouteGeneric />
-              </ProtectedRouteToken>
-            }
-          />
-
-          {/* 📚 Guías y 💡 Explicaciones */}
-          <Route
-            path="/content/:subjectSlug/topic/:blockId"
-            element={
-              <ProtectedRouteToken>
-                <ContentTopic />
-              </ProtectedRouteToken>
-            }
-          />
-          <Route
-            path="/content/:subjectSlug/question/:questionId"
-            element={
-              <ProtectedRouteToken>
-                <ContentQuestion />
+                <RouteAdminServ />
               </ProtectedRouteToken>
             }
           />

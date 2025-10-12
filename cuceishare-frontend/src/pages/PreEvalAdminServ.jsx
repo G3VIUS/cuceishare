@@ -1,53 +1,55 @@
-// src/pages/PreEvalGeneric.jsx
+// src/pages/PreEvalAdminServ.jsx
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 
-const API = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+const API =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) ||
+  process.env.REACT_APP_API_URL ||
+  'http://localhost:3001';
+
+const SUBJECT_SLUG = 'aserv'; // 👈 materia ASERV
+
 const cx = (...xs) => xs.filter(Boolean).join(' ');
 const Icon = ({ children, className='' }) => (
   <span className={cx('inline-grid place-items-center rounded-lg', className)}>{children}</span>
 );
 const Skeleton = ({ className='' }) => <div className={cx('animate-pulse bg-gray-200/70 rounded', className)} />;
 
-// Nombres bonitos por slug (opcional)
-const SUBJECT_META = {
-  ed1: { nombre: 'Estructuras de Datos I', breadcrumb: ['Aprendizaje', 'ED I'] },
-  'administracion-servidores': { nombre: 'Administración de Servidores', breadcrumb: ['Aprendizaje', 'Admin. de Servidores'] },
-};
-
-export default function PreEvalGeneric() {
+export default function PreEvalAdminServ() {
   const navigate = useNavigate();
-  const { subjectSlug } = useParams();
 
-  const meta = SUBJECT_META[subjectSlug] || { nombre: subjectSlug, breadcrumb: ['Aprendizaje', subjectSlug] };
-
-  // Sesión
+  // Session
   const user = useMemo(() => {
     try { return JSON.parse(localStorage.getItem('usuario') || 'null'); } catch { return null; }
   }, []);
   const token = useMemo(() => localStorage.getItem('token') || '', []);
   const userId = user?.id ?? null;
 
-  // Draft key por usuario+materia
-  const key = (k) => `${subjectSlug}:${k}:${user?.id ?? 'anon'}`;
-  const DRAFT_KEY = key('preeval:draft');
+  // Draft key por usuario + materia
+  const draftKey = useMemo(
+    () => `aserv:preeval:draft:${user?.id ?? 'anon'}`,
+    [user?.id]
+  );
 
-  // Estado
+  // Estado principal
+  const [raw, setRaw] = useState({ subject: null, blocks: [], questions: [], choices: [], openKeys: [] });
   const [blocks, setBlocks] = useState([]);
   const [questions, setQuestions] = useState([]);
   const [choices, setChoices] = useState([]);
   const [openKeys, setOpenKeys] = useState([]);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [ok, setOk] = useState('');
   const [info, setInfo] = useState('');
+
   const [selectedChoice, setSelectedChoice] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}').choices || {}; } catch { return {}; }
+    try { return JSON.parse(localStorage.getItem(draftKey) || '{}').choices || {}; } catch { return {}; }
   });
   const [openAnswers, setOpenAnswers] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}').opens || {}; } catch { return {}; }
+    try { return JSON.parse(localStorage.getItem(draftKey) || '{}').opens || {}; } catch { return {}; }
   });
   const [draftState, setDraftState] = useState('saved');
   const [collapsed, setCollapsed] = useState({});
@@ -58,24 +60,29 @@ export default function PreEvalGeneric() {
     if (!user || !token) navigate('/login', { replace: true });
   }, [user, token, navigate]);
 
-  // Carga banco de preguntas
+  // Carga banco de preguntas (ASERV)
   useEffect(() => {
     let alive = true;
     if (!user || !token) return;
     (async () => {
       setLoading(true); setError('');
       try {
-        const { data } = await axios.get(`${API}/api/${subjectSlug}/pre-eval`, {
+        const { data } = await axios.get(`${API}/api/aserv/pre-eval`, {
           headers: { Authorization: `Bearer ${token}` },
-          params: { _t: Date.now() },
+          params: { subjectSlug: SUBJECT_SLUG, _t: Date.now() },
         });
+
         if (!alive) return;
-        setBlocks(data?.blocks || []);
-        setQuestions(data?.questions || []);
-        setChoices(data?.choices || []);
-        setOpenKeys(data?.openKeys || []);
-        const draft = localStorage.getItem(DRAFT_KEY);
-        if (draft) setInfo('Se restauró tu borrador automáticamente.');
+
+        const subject = data?.subject ?? null;
+        const rawBlocks = Array.isArray(data?.blocks) ? data.blocks : [];
+        const rawQuestions = Array.isArray(data?.questions) ? data.questions : [];
+        const rawChoices = Array.isArray(data?.choices) ? data.choices : [];
+        const rawOpenKeys = Array.isArray(data?.openKeys) ? data.openKeys : [];
+
+        setRaw({ subject, blocks: rawBlocks, questions: rawQuestions, choices: rawChoices, openKeys: rawOpenKeys });
+
+        if (localStorage.getItem(draftKey)) setInfo('Se restauró tu borrador automáticamente.');
       } catch (e) {
         if (!alive) return;
         if (e?.response?.status === 401) { navigate('/login', { replace: true }); return; }
@@ -83,17 +90,39 @@ export default function PreEvalGeneric() {
       } finally { if (alive) setLoading(false); }
     })();
     return () => { alive = false; };
-  }, [user, token, navigate, DRAFT_KEY, subjectSlug]);
+  }, [user, token, navigate, draftKey]);
 
-  // Guardado de borrador
+  // Filtrado defensivo por materia (si el backend trae de más)
+  useEffect(() => {
+    const subjectId = raw?.subject?.id || null;
+
+    const filteredBlocks = subjectId
+      ? raw.blocks.filter(b => String(b.subject_id || '') === String(subjectId))
+      : raw.blocks.slice();
+
+    const allowedBlockIds = new Set(filteredBlocks.map(b => b.id));
+
+    const filteredQuestions = raw.questions.filter(q => allowedBlockIds.has(q.block_id));
+    const allowedQuestionIds = new Set(filteredQuestions.map(q => q.id));
+
+    const filteredChoices = raw.choices.filter(c => allowedQuestionIds.has(c.question_id));
+    const filteredOpenKeys = raw.openKeys.filter(k => allowedQuestionIds.has(k.question_id));
+
+    setBlocks(filteredBlocks);
+    setQuestions(filteredQuestions);
+    setChoices(filteredChoices);
+    setOpenKeys(filteredOpenKeys);
+  }, [raw]);
+
+  // Guardado de borrador (por materia)
   useEffect(() => {
     setDraftState('saving');
     const h = setTimeout(() => {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({ choices: selectedChoice, opens: openAnswers }));
+      localStorage.setItem(draftKey, JSON.stringify({ choices: selectedChoice, opens: openAnswers }));
       setDraftState('saved');
     }, 300);
     return () => clearTimeout(h);
-  }, [selectedChoice, openAnswers, DRAFT_KEY]);
+  }, [selectedChoice, openAnswers, draftKey]);
 
   // Índices
   const choicesByQ = useMemo(() => {
@@ -118,19 +147,7 @@ export default function PreEvalGeneric() {
   }, [questions, selectedChoice, openAnswers]);
   const progresoPct = totalPreguntas ? Math.round((respondidas / totalPreguntas) * 100) : 0;
 
-  const blockProgress = useMemo(() => {
-    const res = {};
-    for (const b of blocks) {
-      const qs = questionsByBlock[b.id] || []; let done = 0;
-      for (const q of qs) {
-        if (q.tipo === 'opcion' && selectedChoice[q.id]) done++;
-        if (q.tipo === 'abierta' && (openAnswers[q.id] || '').trim()) done++;
-      }
-      res[b.id] = { done, total: qs.length, pct: qs.length ? Math.round((done / qs.length) * 100) : 0 };
-    } return res;
-  }, [blocks, questionsByBlock, selectedChoice, openAnswers]);
-
-  // Guardar
+  // Guardar (POST) — memoizado para que onKey lo tenga como dependencia
   const handleSubmit = useCallback(async () => {
     setOk(''); setError('');
     if (!user || !token) { navigate('/login', { replace: true }); return; }
@@ -147,7 +164,7 @@ export default function PreEvalGeneric() {
     if (!respuestas.length) { setError('No has respondido ninguna pregunta.'); return; }
     try {
       setSaving(true);
-      await axios.post(`${API}/api/${subjectSlug}/attempts`, { respuestas }, {
+      await axios.post(`${API}/api/aserv/attempts`, { subjectSlug: SUBJECT_SLUG, respuestas }, {
         headers: { Authorization: `Bearer ${token}` },
       });
       setOk('¡Respuestas guardadas!');
@@ -158,15 +175,15 @@ export default function PreEvalGeneric() {
       setError(e?.response?.data?.error || 'No se pudo guardar la pre-evaluación');
       setTimeout(() => setError(''), 3000);
     } finally { setSaving(false); }
-  }, [user, token, questions, selectedChoice, openAnswers, navigate, subjectSlug]);
+  }, [user, token, navigate, questions, selectedChoice, openAnswers]);
 
-  // Atajo teclado
+  // Atajo Ctrl/Cmd+S — depende de handleSubmit
   const onKey = useCallback((e) => {
     const mac = navigator.platform.toUpperCase().includes('MAC');
     if ((mac && e.metaKey && e.key.toLowerCase() === 's') || (!mac && e.ctrlKey && e.key.toLowerCase() === 's')) {
       e.preventDefault(); handleSubmit();
     }
-  }, [handleSubmit]);
+  }, [handleSubmit]); 
   useEffect(() => {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -181,22 +198,23 @@ export default function PreEvalGeneric() {
       {/* App Bar */}
       <header className="sticky top-0 z-40 border-b bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/60">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+          {/* Breadcrumb + título */}
           <div className="flex items-center gap-3 min-w-0">
             <Icon className="h-9 w-9 bg-indigo-600/10 text-indigo-700">📝</Icon>
             <div className="truncate">
               <nav className="text-xs text-slate-500 truncate" aria-label="Breadcrumb">
                 <ol className="flex items-center gap-1">
-                  <li className="hover:text-slate-700 cursor-default">{meta.breadcrumb[0]}</li>
+                  <li className="hover:text-slate-700 cursor-default">Aprendizaje</li>
                   <li className="text-slate-400">/</li>
-                  <li className="hover:text-slate-700 cursor-default">{meta.breadcrumb[1]}</li>
+                  <li className="hover:text-slate-700 cursor-default">ASERV</li>
                   <li className="text-slate-400">/</li>
                   <li className="text-slate-700 font-medium truncate">Pre-evaluación</li>
                 </ol>
               </nav>
-              <h1 className="text-lg md:text-xl font-bold tracking-tight text-slate-900">
-                Pre-evaluación — <span className="text-indigo-700">{meta.nombre}</span>
+              <h1 className="text-lg md:text-xl font-bold tracking-tight">
+                Pre-evaluación — <span className="text-indigo-700">Administración de Servidores</span>
               </h1>
-              <p className="text-[11px] text-slate-500">Usuario: <span className="font-mono">#{userId}</span></p>
+              <p className="text-[11px] text-slate-500">Usuario: <span className="font-mono">#{user.id}</span></p>
             </div>
           </div>
 
@@ -216,6 +234,12 @@ export default function PreEvalGeneric() {
               </div>
             </div>
             <button
+              onClick={() => navigate('/ruta/aserv')}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm shadow-sm"
+            >
+              📈 Ver mi ruta
+            </button>
+            <button
               onClick={handleSubmit}
               disabled={saving}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-sm shadow-sm"
@@ -229,32 +253,51 @@ export default function PreEvalGeneric() {
 
       {/* Toasts */}
       <div className="fixed inset-x-0 top-2 z-50 flex flex-col items-center gap-2 px-3">
-        {ok && <div className="max-w-md w-full rounded-xl border bg-emerald-50 text-emerald-800 px-3 py-2 shadow">✅ {ok}</div>}
-        {error && <div className="max-w-md w-full rounded-xl border bg-rose-50 text-rose-800 px-3 py-2 shadow">⚠️ {error}</div>}
-        {info && <div className="max-w-md w-full rounded-xl border bg-sky-50 text-sky-800 px-3 py-2 shadow">💡 {info}</div>}
+        {ok && (
+          <div className="max-w-md w-full rounded-xl border bg-emerald-50 text-emerald-800 px-3 py-2 shadow">
+            ✅ {ok}
+          </div>
+        )}
+        {error && (
+          <div className="max-w-md w-full rounded-xl border bg-rose-50 text-rose-800 px-3 py-2 shadow">
+            ⚠️ {error}
+          </div>
+        )}
+        {info && (
+          <div className="max-w-md w-full rounded-xl border bg-sky-50 text-sky-800 px-3 py-2 shadow">
+            💡 {info}
+          </div>
+        )}
       </div>
 
       {/* Contenido */}
       <main className="max-w-7xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
         {/* Columna principal */}
         <div>
-          {/* Toolbar */}
+          {/* Barra de herramientas */}
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <button
-              onClick={() => { const next = {}; blocks.forEach(b => { next[b.id] = false; }); setCollapsed(next); }}
+              onClick={() => {
+                const next = {}; blocks.forEach(b => next[b.id] = false); setCollapsed(next);
+              }}
               className="px-3 py-1.5 rounded-full border bg-white hover:bg-slate-50 text-slate-700"
             >
               Expandir todo
             </button>
             <button
-              onClick={() => { const next = {}; blocks.forEach(b => { next[b.id] = true; }); setCollapsed(next); }}
+              onClick={() => {
+                const next = {}; blocks.forEach(b => next[b.id] = true); setCollapsed(next);
+              }}
               className="px-3 py-1.5 rounded-full border bg-white hover:bg-slate-50 text-slate-700"
             >
               Contraer todo
             </button>
             <div className="ml-auto flex items-center gap-3 text-xs">
               <kbd className="px-2 py-1 rounded bg-slate-100 text-slate-700 border">Ctrl/Cmd + S</kbd>
-              <span className={cx('px-2 py-1 rounded', draftState === 'saving' ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-800')}>
+              <span className={cx(
+                'px-2 py-1 rounded',
+                draftState === 'saving' ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-800'
+              )}>
                 {draftState === 'saving' ? 'Guardando borrador…' : 'Borrador guardado ✓'}
               </span>
             </div>
@@ -286,12 +329,20 @@ export default function PreEvalGeneric() {
           ) : (
             <div className="space-y-6">
               {blocks.map((b, bIndex) => {
-                const bp = blockProgress[b.id] || { done: 0, total: 0, pct: 0 };
-                const isCol = !!collapsed[b.id];
                 const qs = questionsByBlock[b.id] || [];
+                const done = qs.reduce((acc, q)=>
+                  acc + (q.tipo === 'opcion' ? !!selectedChoice[q.id] : !!(openAnswers[q.id]||'').trim()), 0
+                );
+                const pct = qs.length ? Math.round((done/qs.length)*100) : 0;
+                const isCol = !!collapsed[b.id];
+
                 return (
-                  <section key={b.id} className="bg-white rounded-2xl shadow-sm border overflow-hidden transition-all" aria-label={`Bloque ${b.titulo}`}>
-                    {/* Header bloque */}
+                  <section
+                    key={b.id}
+                    className="bg-white rounded-2xl shadow-sm border overflow-hidden transition-all"
+                    aria-label={`Bloque ${b.titulo}`}
+                  >
+                    {/* Header de bloque */}
                     <div className="px-5 py-4 flex items-center gap-3">
                       <button
                         onClick={() => setCollapsed(p => ({ ...p, [b.id]: !p[b.id] }))}
@@ -311,14 +362,14 @@ export default function PreEvalGeneric() {
                         </div>
                         <div className="mt-2">
                           <div className="h-2 bg-slate-200 rounded">
-                            <div className="h-2 rounded bg-indigo-600 transition-[width] duration-500" style={{ width: `${bp.pct}%` }} />
+                            <div className="h-2 rounded bg-indigo-600 transition-[width] duration-500" style={{ width: `${pct}%` }} />
                           </div>
-                          <div className="text-[11px] text-slate-500 mt-1">{bp.done}/{bp.total} ({bp.pct}%)</div>
+                          <div className="text-[11px] text-slate-500 mt-1">{done}/{qs.length} ({pct}%)</div>
                         </div>
                       </div>
                     </div>
 
-                    {/* Contenido bloque */}
+                    {/* Contenido de bloque */}
                     {!isCol && (
                       <div id={`block-${b.id}`} className="px-5 pb-5 space-y-5">
                         {qs.map((q, idx) => (
@@ -410,8 +461,17 @@ export default function PreEvalGeneric() {
             <div className="text-[11px] text-slate-500 mt-2">
               Borrador: {draftState === 'saving' ? 'guardando…' : 'guardado ✓'}
             </div>
+            <div className="mt-3">
+              <button
+                onClick={() => navigate('/ruta/aserv')}
+                className="w-full px-4 py-2 rounded-xl border bg-white hover:bg-slate-50 text-slate-800 font-semibold shadow-sm"
+              >
+                📈 Ver mi ruta
+              </button>
+            </div>
           </div>
 
+          {/* Tips rápidos */}
           <div className="rounded-2xl border bg-white shadow-sm p-4">
             <h3 className="font-bold mb-2">Atajos</h3>
             <ul className="text-sm text-slate-600 space-y-1">
@@ -422,10 +482,22 @@ export default function PreEvalGeneric() {
         </aside>
       </main>
 
+      {/* Botón flotante (móvil) */}
+      <div className="fixed bottom-4 right-4 z-40 md:hidden">
+        <button
+          onClick={handleSubmit}
+          disabled={saving}
+          className="h-12 px-5 rounded-full shadow-lg text-white font-semibold bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60"
+          aria-label="Guardar respuestas"
+        >
+          {saving ? 'Guardando…' : 'Guardar'}
+        </button>
+      </div>
+
       {/* Footer */}
       <footer className="border-t bg-white/70">
         <div className="max-w-7xl mx-auto px-4 py-3 text-[11px] text-slate-500 flex items-center justify-between">
-          <span>Pre-evaluación — {meta.nombre}</span>
+          <span>Pre-evaluación ASERV</span>
           <span>Ctrl/Cmd + S para guardar rápido</span>
         </div>
       </footer>
