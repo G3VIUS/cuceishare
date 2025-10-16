@@ -18,10 +18,21 @@ const PORT = process.env.PORT || 3001;
 // Si corres detrás de proxy/reverse-proxy
 app.set('trust proxy', 1);
 
-// CORS (ajusta origin si tu frontend corre en otro host/puerto)
+// CORS (acepta varios orígenes comunes)
+const DEFAULT_ORIGINS = [
+  'http://localhost:3000', // CRA
+  'http://localhost:5173', // Vite
+];
+const ALLOWED_ORIGINS = (() => {
+  const env = process.env.CORS_ORIGIN;
+  if (!env) return DEFAULT_ORIGINS;
+  // Permite una lista separada por comas en CORS_ORIGIN
+  return env.split(',').map(s => s.trim()).filter(Boolean);
+})();
+
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    origin: ALLOWED_ORIGINS,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
@@ -47,11 +58,12 @@ app.use('/auth', require('./routes/auth'));
 
 // ===== Aprendizaje por materia (routers individuales) =====
 app.use('/api/ed1', require('./routes/route-ed1'));
-app.use('/api/aserv', require('./routes/route-aserv')); // 👈 Administración de Servidores
+app.use('/api/aserv', require('./routes/route-aserv'));        // Administración de Servidores
+app.use('/api/mineria', require('./routes/route-mineria'));    // Minería de Datos
+app.use('/api/redes', require('./routes/route-redes'));        // Redes
+app.use('/api/algoritmia', require('./routes/route-algoritmia'));
+app.use('/api/teoria', require('./routes/route-teoria'));
 
-// 🚫 Router genérico (desactivado para evitar choques)
-// Si lo necesitas en el futuro, colócalo SIEMPRE después de los routers específicos.
-// app.use('/api/:subject', require('./routes/route-subject'));
 
 /* =======================
    Healthcheck y raíz
@@ -97,7 +109,6 @@ app.use((err, _req, res, _next) => {
     console.error('[post-response error]', err);
     return;
   }
-
   const status = err.status || 500;
 
   if (status >= 500) {
@@ -120,7 +131,7 @@ app.use((err, _req, res, _next) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 Backend listo en http://localhost:${PORT}`);
-  console.log(`🔐 CORS_ORIGIN: ${process.env.CORS_ORIGIN || 'http://localhost:3000'}`);
+  console.log(`🔐 CORS_ORIGIN(s): ${ALLOWED_ORIGINS.join(', ')}`);
 });
 
 // Debug util de promesas/errores no manejados

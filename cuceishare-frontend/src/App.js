@@ -25,10 +25,26 @@ import RouteED1 from './pages/RouteED1';
 import PreEvalAdminServ from './pages/PreEvalAdminServ';
 import RouteAdminServ from './pages/RouteAdminServ';
 
+// Minería de Datos
+import PreEvalMineriaDatos from './pages/PreEvalMineriaDatos';
+import RouteMineriaDatos from './pages/RouteMineriaDatos';
+
+// Redes
+import PreEvalRedes from './pages/PreEvalRedes';
+import RouteRedes from './pages/RouteRedes';
+
+// Algoritmia
+import PreEvalAlgoritmia from './pages/PreEvalAlgoritmia';
+import RouteAlgoritmia from './pages/RouteAlgoritmia';
+
+// Teoría de la Computación (nuevo)
+import PreEvalTeoria from './pages/PreEvalTeoria';
+import RouteTeoria from './pages/RouteTeoria';
+
 // ---- Protecciones ----
 function ProtectedRoute({ children }) {
   const token = localStorage.getItem('token');
-  const legacyUser = localStorage.getItem('usuario');
+  const legacyUser = localStorage.getItem('usuario'); // compatibilidad
   return (token || legacyUser) ? children : <Navigate to="/login" replace />;
 }
 function ProtectedRouteToken({ children }) {
@@ -49,7 +65,7 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
 
-          {/* Protegidas */}
+          {/* Protegidas (subir/perfil) */}
           <Route
             path="/subir"
             element={
@@ -76,7 +92,7 @@ export default function App() {
               </ProtectedRoute>
             }
           />
-          {/* Compat plural (enlaces viejos) */}
+          {/* Compat con plural */}
           <Route
             path="/apuntes/:id/editar"
             element={
@@ -105,7 +121,7 @@ export default function App() {
             }
           />
 
-          {/* Administración de Servidores (ASERV) */}
+          {/* Administración de Servidores */}
           <Route
             path="/pre-eval/aserv"
             element={
@@ -119,6 +135,78 @@ export default function App() {
             element={
               <ProtectedRouteToken>
                 <RouteAdminServ />
+              </ProtectedRouteToken>
+            }
+          />
+
+          {/* Minería de Datos */}
+          <Route
+            path="/pre-eval/mineria-datos"
+            element={
+              <ProtectedRouteToken>
+                <PreEvalMineriaDatos />
+              </ProtectedRouteToken>
+            }
+          />
+          <Route
+            path="/ruta/mineria-datos"
+            element={
+              <ProtectedRouteToken>
+                <RouteMineriaDatos />
+              </ProtectedRouteToken>
+            }
+          />
+
+          {/* Redes */}
+          <Route
+            path="/pre-eval/redes"
+            element={
+              <ProtectedRouteToken>
+                <PreEvalRedes />
+              </ProtectedRouteToken>
+            }
+          />
+          <Route
+            path="/ruta/redes"
+            element={
+              <ProtectedRouteToken>
+                <RouteRedes />
+              </ProtectedRouteToken>
+            }
+          />
+
+          {/* Algoritmia */}
+          <Route
+            path="/pre-eval/algoritmia"
+            element={
+              <ProtectedRouteToken>
+                <PreEvalAlgoritmia />
+              </ProtectedRouteToken>
+            }
+          />
+          <Route
+            path="/ruta/algoritmia"
+            element={
+              <ProtectedRouteToken>
+                <RouteAlgoritmia />
+              </ProtectedRouteToken>
+            }
+          />
+
+          {/* Teoría de la Computación (nuevo) */}
+          <Route
+            path="/pre-eval/teoria"
+            element={
+              <ProtectedRouteToken>
+                <PreEvalTeoria />
+              </ProtectedRouteToken>
+            }
+          />
+          <Route
+            path="/ruta/teoria"
+            element={
+              <ProtectedRouteToken>
+                <RouteTeoria />
               </ProtectedRouteToken>
             }
           />
