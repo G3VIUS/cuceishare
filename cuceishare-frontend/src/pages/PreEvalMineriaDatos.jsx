@@ -155,20 +155,8 @@ export default function PreEvalMineriaDatos() {
   }, [questions, selectedChoice, openAnswers]);
   const progresoPct = totalPreguntas ? Math.round((respondidas / totalPreguntas) * 100) : 0;
 
-  const blockProgress = useMemo(() => {
-    const res = {};
-    for (const b of blocks) {
-      const qs = questionsByBlock[b.id] || []; let done = 0;
-      for (const q of qs) {
-        if (q.tipo === 'opcion' && selectedChoice[q.id]) done++;
-        if (q.tipo === 'abierta' && (openAnswers[q.id] || '').trim()) done++;
-      }
-      res[b.id] = { done, total: qs.length, pct: qs.length ? Math.round((done / qs.length) * 100) : 0 };
-    } return res;
-  }, [blocks, questionsByBlock, selectedChoice, openAnswers]);
-
   // Guardar (POST) — usa endpoints de Minería y reusa sessionId (md_session)
-  const handleSubmit = async () => {
+  const handleSubmit = useCallback(async () => {
     setOk(''); setError('');
     if (!user || !token) { navigate('/login', { replace: true }); return; }
 
@@ -176,7 +164,7 @@ export default function PreEvalMineriaDatos() {
     for (const q of questions) {
       if (q.tipo === 'opcion') {
         const ch = selectedChoice[q.id];
-        if (ch) respuestas.push({ blockId: q.block_id, questionId: q.id, type: 'opcion', choiceId: ch }); // 👈 choiceId correcto
+        if (ch) respuestas.push({ blockId: q.block_id, questionId: q.id, type: 'opcion', choiceId: ch });
       } else {
         const txt = (openAnswers[q.id] || '').trim();
         if (txt) respuestas.push({ blockId: q.block_id, questionId: q.id, type: 'abierta', answerText: txt });
@@ -204,7 +192,21 @@ export default function PreEvalMineriaDatos() {
       setError(e?.response?.data?.error || 'No se pudo guardar la pre-evaluación');
       setTimeout(() => setError(''), 3000);
     } finally { setSaving(false); }
-  };
+  }, [user, token, questions, selectedChoice, openAnswers, navigate]);
+
+  // Autocierre del toast informativo
+  useEffect(() => {
+    if (!info) return;
+    const t = setTimeout(() => setInfo(''), 4000);
+    return () => clearTimeout(t);
+  }, [info]);
+
+  // Cerrar toasts con Esc
+  useEffect(() => {
+    const onEsc = (e) => { if (e.key === 'Escape') { setOk(''); setError(''); setInfo(''); } };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, []);
 
   // Atajo Ctrl/Cmd+S
   const onKey = useCallback((e) => {
@@ -212,7 +214,7 @@ export default function PreEvalMineriaDatos() {
     if ((mac && e.metaKey && e.key.toLowerCase() === 's') || (!mac && e.ctrlKey && e.key.toLowerCase() === 's')) {
       e.preventDefault(); handleSubmit();
     }
-  }, []); 
+  }, [handleSubmit]); 
   useEffect(() => {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -281,20 +283,41 @@ export default function PreEvalMineriaDatos() {
         </div>
       </header>
 
-      {/* Toasts */}
-      <div className="fixed inset-x-0 top-2 z-50 flex flex-col items-center gap-2 px-3">
+      {/* Toasts — arriba, sobre el navbar, con ✕, autocierre y sin bloquear clics */}
+      <div className="fixed inset-x-0 top-2 z-[60] flex flex-col items-center gap-2 px-3 pointer-events-none">
         {ok && (
-          <div className="max-w-md w-full rounded-xl border bg-emerald-50 text-emerald-800 px-3 py-2 shadow">
+          <div className="pointer-events-auto relative max-w-md w-full rounded-xl border bg-emerald-50 text-emerald-800 px-3 py-2 shadow">
+            <button
+              onClick={() => setOk('')}
+              className="absolute right-2 top-1.5 rounded p-1 text-emerald-700/70 hover:bg-emerald-100"
+              aria-label="Cerrar notificación de éxito"
+            >
+              ×
+            </button>
             ✅ {ok}
           </div>
         )}
         {error && (
-          <div className="max-w-md w-full rounded-xl border bg-rose-50 text-rose-800 px-3 py-2 shadow">
+          <div className="pointer-events-auto relative max-w-md w-full rounded-xl border bg-rose-50 text-rose-800 px-3 py-2 shadow">
+            <button
+              onClick={() => setError('')}
+              className="absolute right-2 top-1.5 rounded p-1 text-rose-700/70 hover:bg-rose-100"
+              aria-label="Cerrar notificación de error"
+            >
+              ×
+            </button>
             ⚠️ {error}
           </div>
         )}
         {info && (
-          <div className="max-w-md w-full rounded-xl border bg-sky-50 text-sky-800 px-3 py-2 shadow">
+          <div className="pointer-events-auto relative max-w-md w-full rounded-xl border bg-sky-50 text-sky-800 px-3 py-2 shadow">
+            <button
+              onClick={() => setInfo('')}
+              className="absolute right-2 top-1.5 rounded p-1 text-sky-700/70 hover:bg-sky-100"
+              aria-label="Cerrar notificación informativa"
+            >
+              ×
+            </button>
             💡 {info}
           </div>
         )}
@@ -359,16 +382,12 @@ export default function PreEvalMineriaDatos() {
           ) : (
             <div className="space-y-6">
               {blocks.map((b, bIndex) => {
-                const bp = (()=>{
-                  const qs = questionsByBlock[b.id] || [];
-                  const done = qs.reduce((acc, q)=>
-                    acc + (q.tipo === 'opcion' ? !!selectedChoice[q.id] : !!(openAnswers[q.id]||'').trim()), 0
-                  );
-                  return { done, total: qs.length, pct: qs.length ? Math.round((done/qs.length)*100) : 0 };
-                })();
-
-                const isCol = !!collapsed[b.id];
                 const qs = questionsByBlock[b.id] || [];
+                const done = qs.reduce((acc, q)=>
+                  acc + (q.tipo === 'opcion' ? !!selectedChoice[q.id] : !!(openAnswers[q.id]||'').trim()), 0
+                );
+                const pct = qs.length ? Math.round((done/qs.length)*100) : 0;
+                const isCol = !!collapsed[b.id];
 
                 return (
                   <section
@@ -396,9 +415,9 @@ export default function PreEvalMineriaDatos() {
                         </div>
                         <div className="mt-2">
                           <div className="h-2 bg-slate-200 rounded">
-                            <div className="h-2 rounded bg-indigo-600 transition-[width] duration-500" style={{ width: `${bp.pct}%` }} />
+                            <div className="h-2 rounded bg-indigo-600 transition-[width] duration-500" style={{ width: `${pct}%` }} />
                           </div>
-                          <div className="text-[11px] text-slate-500 mt-1">{bp.done}/{bp.total} ({bp.pct}%)</div>
+                          <div className="text-[11px] text-slate-500 mt-1">{done}/{qs.length} ({pct}%)</div>
                         </div>
                       </div>
                     </div>

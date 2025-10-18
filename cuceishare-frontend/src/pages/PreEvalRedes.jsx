@@ -39,6 +39,7 @@ export default function PreEvalRedes() {
   const [choices, setChoices] = useState([]);
   const [openKeys, setOpenKeys] = useState([]);
 
+  // UI
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -57,13 +58,13 @@ export default function PreEvalRedes() {
 
   // Redirect si no hay sesión
   useEffect(() => {
-    if (!user || !token) navigate('/login', { replace: true });
+    if (!userId || !token) navigate('/login', { replace: true });
   }, [userId, token, navigate]);
 
   // Carga banco de preguntas (pide por la materia Redes)
   useEffect(() => {
     let alive = true;
-    if (!user || !token) return;
+    if (!userId || !token) return;
     (async () => {
       setLoading(true); setError('');
       try {
@@ -147,22 +148,10 @@ export default function PreEvalRedes() {
   }, [questions, selectedChoice, openAnswers]);
   const progresoPct = totalPreguntas ? Math.round((respondidas / totalPreguntas) * 100) : 0;
 
-  const blockProgress = useMemo(() => {
-    const res = {};
-    for (const b of blocks) {
-      const qs = questionsByBlock[b.id] || []; let done = 0;
-      for (const q of qs) {
-        if (q.tipo === 'opcion' && selectedChoice[q.id]) done++;
-        if (q.tipo === 'abierta' && (openAnswers[q.id] || '').trim()) done++;
-      }
-      res[b.id] = { done, total: qs.length, pct: qs.length ? Math.round((done / qs.length) * 100) : 0 };
-    } return res;
-  }, [blocks, questionsByBlock, selectedChoice, openAnswers]);
-
   // Guardar (POST)
-  const handleSubmit = async () => {
+  const handleSubmit = useCallback(async () => {
     setOk(''); setError('');
-    if (!user || !token) { navigate('/login', { replace: true }); return; }
+    if (!userId || !token) { navigate('/login', { replace: true }); return; }
     const respuestas = [];
     for (const q of questions) {
       if (q.tipo === 'opcion') {
@@ -180,14 +169,12 @@ export default function PreEvalRedes() {
         headers: { Authorization: `Bearer ${token}` },
       });
       setOk('¡Respuestas guardadas!');
-      setTimeout(() => setOk(''), 2000);
       topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (e) {
       if (e?.response?.status === 401) { navigate('/login', { replace: true }); return; }
       setError(e?.response?.data?.error || 'No se pudo guardar la pre-evaluación');
-      setTimeout(() => setError(''), 3000);
     } finally { setSaving(false); }
-  };
+  }, [userId, token, navigate, questions, selectedChoice, openAnswers]);
 
   // Atajo Ctrl/Cmd+S
   const onKey = useCallback((e) => {
@@ -195,15 +182,20 @@ export default function PreEvalRedes() {
     if ((mac && e.metaKey && e.key.toLowerCase() === 's') || (!mac && e.ctrlKey && e.key.toLowerCase() === 's')) {
       e.preventDefault(); handleSubmit();
     }
-  }, []); 
+  }, [handleSubmit]); 
   useEffect(() => {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onKey]);
 
+  // Auto-ocultar toasts
+  useEffect(() => { if (!ok) return; const t=setTimeout(()=>setOk(''),2500); return ()=>clearTimeout(t); }, [ok]);
+  useEffect(() => { if (!error) return; const t=setTimeout(()=>setError(''),4000); return ()=>clearTimeout(t); }, [error]);
+  useEffect(() => { if (!info) return; const t=setTimeout(()=>setInfo(''),4500); return ()=>clearTimeout(t); }, [info]);
+
   const shortId = (id) => String(id).slice(-4).padStart(4, '0');
 
-  if (!user || !token) return <div className="p-6 text-center">Redirigiendo…</div>;
+  if (!userId || !token) return <div className="p-6 text-center">Redirigiendo…</div>;
 
   return (
     <div ref={topRef} className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100">
@@ -263,23 +255,46 @@ export default function PreEvalRedes() {
         </div>
       </header>
 
-      {/* Toasts */}
-      <div className="fixed inset-x-0 top-2 z-50 flex flex-col items-center gap-2 px-3">
-        {ok && (
-          <div className="max-w-md w-full rounded-xl border bg-emerald-50 text-emerald-800 px-3 py-2 shadow">
-            ✅ {ok}
-          </div>
-        )}
-        {error && (
-          <div className="max-w-md w-full rounded-xl border bg-rose-50 text-rose-800 px-3 py-2 shadow">
-            ⚠️ {error}
-          </div>
-        )}
-        {info && (
-          <div className="max-w-md w-full rounded-xl border bg-sky-50 text-sky-800 px-3 py-2 shadow">
-            💡 {info}
-          </div>
-        )}
+      {/* Toasts — superpuestos, con autocierre y botón ✕ */}
+      <div className="fixed top-2 left-1/2 -translate-x-1/2 z-[60] pointer-events-none px-3 w-full max-w-3xl">
+        <div className="flex flex-col items-center gap-2">
+          {ok && (
+            <div className="pointer-events-auto relative max-w-md w-full rounded-xl border bg-emerald-50 text-emerald-800 px-3 py-2 shadow">
+              <button
+                onClick={() => setOk('')}
+                aria-label="Cerrar notificación"
+                className="absolute -top-1.5 -right-1.5 h-6 w-6 grid place-items-center rounded-full border bg-white/80 text-slate-600 hover:bg-white shadow"
+              >
+                ×
+              </button>
+              ✅ {ok}
+            </div>
+          )}
+          {error && (
+            <div className="pointer-events-auto relative max-w-md w-full rounded-xl border bg-rose-50 text-rose-800 px-3 py-2 shadow">
+              <button
+                onClick={() => setError('')}
+                aria-label="Cerrar notificación"
+                className="absolute -top-1.5 -right-1.5 h-6 w-6 grid place-items-center rounded-full border bg-white/80 text-slate-600 hover:bg-white shadow"
+              >
+                ×
+              </button>
+              ⚠️ {error}
+            </div>
+          )}
+          {info && (
+            <div className="pointer-events-auto relative max-w-md w-full rounded-xl border bg-sky-50 text-sky-800 px-3 py-2 shadow">
+              <button
+                onClick={() => setInfo('')}
+                aria-label="Cerrar notificación"
+                className="absolute -top-1.5 -right-1.5 h-6 w-6 grid place-items-center rounded-full border bg-white/80 text-slate-600 hover:bg-white shadow"
+              >
+                ×
+              </button>
+              💡 {info}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Contenido */}
@@ -341,16 +356,12 @@ export default function PreEvalRedes() {
           ) : (
             <div className="space-y-6">
               {blocks.map((b, bIndex) => {
-                const bp = (()=>{
-                  const qs = questionsByBlock[b.id] || [];
-                  const done = qs.reduce((acc, q)=>
-                    acc + (q.tipo === 'opcion' ? !!selectedChoice[q.id] : !!(openAnswers[q.id]||'').trim()), 0
-                  );
-                  return { done, total: qs.length, pct: qs.length ? Math.round((done/qs.length)*100) : 0 };
-                })();
-
-                const isCol = !!collapsed[b.id];
                 const qs = questionsByBlock[b.id] || [];
+                const done = qs.reduce((acc, q)=>
+                  acc + (q.tipo === 'opcion' ? !!selectedChoice[q.id] : !!(openAnswers[q.id]||'').trim()), 0
+                );
+                const pct = qs.length ? Math.round((done/qs.length)*100) : 0;
+                const isCol = !!collapsed[b.id];
 
                 return (
                   <section
@@ -378,9 +389,9 @@ export default function PreEvalRedes() {
                         </div>
                         <div className="mt-2">
                           <div className="h-2 bg-slate-200 rounded">
-                            <div className="h-2 rounded bg-indigo-600 transition-[width] duration-500" style={{ width: `${bp.pct}%` }} />
+                            <div className="h-2 rounded bg-indigo-600 transition-[width] duration-500" style={{ width: `${pct}%` }} />
                           </div>
-                          <div className="text-[11px] text-slate-500 mt-1">{bp.done}/{bp.total} ({bp.pct}%)</div>
+                          <div className="text-[11px] text-slate-500 mt-1">{done}/{qs.length} ({pct}%)</div>
                         </div>
                       </div>
                     </div>

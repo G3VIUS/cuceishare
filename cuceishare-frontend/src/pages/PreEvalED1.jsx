@@ -8,7 +8,7 @@ const API =
   process.env.REACT_APP_API_URL ||
   'http://localhost:3001';
 
-const SUBJECT_SLUG = 'ed1'; // 👈 materia de esta pantalla
+const SUBJECT_SLUG = 'ed1';
 
 const cx = (...xs) => xs.filter(Boolean).join(' ');
 const Icon = ({ children, className='' }) => (
@@ -24,15 +24,14 @@ export default function PreEvalED1() {
     try { return JSON.parse(localStorage.getItem('usuario') || 'null'); } catch { return null; }
   }, []);
   const token = useMemo(() => localStorage.getItem('token') || '', []);
-  const userId = user?.id ?? null;
 
-  // Draft key por usuario + materia (evita mezclar borradores de otras materias)
+  // Draft key por usuario + materia
   const draftKey = useMemo(
     () => `ed1:preeval:draft:${user?.id ?? 'anon'}`,
     [user?.id]
   );
 
-  // Estado principal (estado "crudo" + estado filtrado)
+  // Estado principal
   const [raw, setRaw] = useState({ subject: null, blocks: [], questions: [], choices: [], openKeys: [] });
   const [blocks, setBlocks] = useState([]);
   const [questions, setQuestions] = useState([]);
@@ -58,9 +57,9 @@ export default function PreEvalED1() {
   // Redirect si no hay sesión
   useEffect(() => {
     if (!user || !token) navigate('/login', { replace: true });
-  }, [userId, token, navigate]);
+  }, [user, token, navigate]);
 
-  // Carga banco de preguntas (pide por materia)
+  // Carga banco de preguntas
   useEffect(() => {
     let alive = true;
     if (!user || !token) return;
@@ -69,12 +68,11 @@ export default function PreEvalED1() {
       try {
         const { data } = await axios.get(`${API}/api/ed1/pre-eval`, {
           headers: { Authorization: `Bearer ${token}` },
-          params: { subjectSlug: SUBJECT_SLUG, _t: Date.now() }, // 👈 pedimos por materia
+          params: { subjectSlug: SUBJECT_SLUG, _t: Date.now() },
         });
 
         if (!alive) return;
 
-        // Guardamos crudo
         const subject = data?.subject ?? null;
         const rawBlocks = Array.isArray(data?.blocks) ? data.blocks : [];
         const rawQuestions = Array.isArray(data?.questions) ? data.questions : [];
@@ -83,7 +81,6 @@ export default function PreEvalED1() {
 
         setRaw({ subject, blocks: rawBlocks, questions: rawQuestions, choices: rawChoices, openKeys: rawOpenKeys });
 
-        // Notifica borrador restaurado
         if (localStorage.getItem(draftKey)) setInfo('Se restauró tu borrador automáticamente.');
       } catch (e) {
         if (!alive) return;
@@ -92,25 +89,21 @@ export default function PreEvalED1() {
       } finally { if (alive) setLoading(false); }
     })();
     return () => { alive = false; };
-  }, [userId, token, navigate, draftKey]);
+  }, [user, token, navigate, draftKey]);
 
-  // Filtrado defensivo por materia (si el backend trae de más)
+  // Filtrado defensivo
   useEffect(() => {
-    // 1) Determinar subjectId si viene del backend
     const subjectId = raw?.subject?.id || null;
 
-    // 2) Filtrar bloques por subjectId si existe; si no, asumimos que el backend ya filtró
     const filteredBlocks = subjectId
       ? raw.blocks.filter(b => String(b.subject_id || '') === String(subjectId))
       : raw.blocks.slice();
 
     const allowedBlockIds = new Set(filteredBlocks.map(b => b.id));
 
-    // 3) Filtrar preguntas solo de esos bloques
     const filteredQuestions = raw.questions.filter(q => allowedBlockIds.has(q.block_id));
     const allowedQuestionIds = new Set(filteredQuestions.map(q => q.id));
 
-    // 4) Filtrar choices y openKeys que pertenezcan a esas preguntas
     const filteredChoices = raw.choices.filter(c => allowedQuestionIds.has(c.question_id));
     const filteredOpenKeys = raw.openKeys.filter(k => allowedQuestionIds.has(k.question_id));
 
@@ -120,7 +113,7 @@ export default function PreEvalED1() {
     setOpenKeys(filteredOpenKeys);
   }, [raw]);
 
-  // Guardado de borrador (por materia)
+  // Guardado de borrador
   useEffect(() => {
     setDraftState('saving');
     const h = setTimeout(() => {
@@ -153,20 +146,8 @@ export default function PreEvalED1() {
   }, [questions, selectedChoice, openAnswers]);
   const progresoPct = totalPreguntas ? Math.round((respondidas / totalPreguntas) * 100) : 0;
 
-  const blockProgress = useMemo(() => {
-    const res = {};
-    for (const b of blocks) {
-      const qs = questionsByBlock[b.id] || []; let done = 0;
-      for (const q of qs) {
-        if (q.tipo === 'opcion' && selectedChoice[q.id]) done++;
-        if (q.tipo === 'abierta' && (openAnswers[q.id] || '').trim()) done++;
-      }
-      res[b.id] = { done, total: qs.length, pct: qs.length ? Math.round((done / qs.length) * 100) : 0 };
-    } return res;
-  }, [blocks, questionsByBlock, selectedChoice, openAnswers]);
-
   // Guardar (POST)
-  const handleSubmit = async () => {
+  const handleSubmit = useCallback(async () => {
     setOk(''); setError('');
     if (!user || !token) { navigate('/login', { replace: true }); return; }
     const respuestas = [];
@@ -193,7 +174,21 @@ export default function PreEvalED1() {
       setError(e?.response?.data?.error || 'No se pudo guardar la pre-evaluación');
       setTimeout(() => setError(''), 3000);
     } finally { setSaving(false); }
-  };
+  }, [user, token, questions, selectedChoice, openAnswers, navigate]);
+
+  // Auto-cierre del toast informativo
+  useEffect(() => {
+    if (!info) return;
+    const t = setTimeout(() => setInfo(''), 4000);
+    return () => clearTimeout(t);
+  }, [info]);
+
+  // Esc para cerrar toasts
+  useEffect(() => {
+    const onEsc = (e) => { if (e.key === 'Escape') { setOk(''); setError(''); setInfo(''); } };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, []);
 
   // Atajo Ctrl/Cmd+S
   const onKey = useCallback((e) => {
@@ -201,13 +196,12 @@ export default function PreEvalED1() {
     if ((mac && e.metaKey && e.key.toLowerCase() === 's') || (!mac && e.ctrlKey && e.key.toLowerCase() === 's')) {
       e.preventDefault(); handleSubmit();
     }
-  }, []); 
+  }, [handleSubmit]);
   useEffect(() => {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onKey]);
 
-  // Helpers UI
   const shortId = (id) => String(id).slice(-4).padStart(4, '0');
 
   if (!user || !token) return <div className="p-6 text-center">Redirigiendo…</div>;
@@ -217,7 +211,6 @@ export default function PreEvalED1() {
       {/* App Bar */}
       <header className="sticky top-0 z-40 border-b bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/60">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
-          {/* Breadcrumb + título */}
           <div className="flex items-center gap-3 min-w-0">
             <Icon className="h-9 w-9 bg-indigo-600/10 text-indigo-700">📝</Icon>
             <div className="truncate">
@@ -237,7 +230,6 @@ export default function PreEvalED1() {
             </div>
           </div>
 
-          {/* Progreso + acciones */}
           <div className="hidden md:flex items-center gap-3">
             <div className="w-48">
               <div className="flex items-center justify-between text-[11px] text-slate-500 mb-1">
@@ -270,20 +262,41 @@ export default function PreEvalED1() {
         </div>
       </header>
 
-      {/* Toasts */}
-      <div className="fixed inset-x-0 top-2 z-50 flex flex-col items-center gap-2 px-3">
+      {/* Toasts — como antes: arriba del todo, sobre el navbar */}
+      <div className="fixed inset-x-0 top-2 z-[60] flex flex-col items-center gap-2 px-3 pointer-events-none">
         {ok && (
-          <div className="max-w-md w-full rounded-xl border bg-emerald-50 text-emerald-800 px-3 py-2 shadow">
+          <div className="pointer-events-auto relative max-w-md w-full rounded-xl border bg-emerald-50 text-emerald-800 px-3 py-2 shadow">
+            <button
+              onClick={() => setOk('')}
+              className="absolute right-2 top-1.5 rounded p-1 text-emerald-700/70 hover:bg-emerald-100"
+              aria-label="Cerrar notificación de éxito"
+            >
+              ×
+            </button>
             ✅ {ok}
           </div>
         )}
         {error && (
-          <div className="max-w-md w-full rounded-xl border bg-rose-50 text-rose-800 px-3 py-2 shadow">
+          <div className="pointer-events-auto relative max-w-md w-full rounded-xl border bg-rose-50 text-rose-800 px-3 py-2 shadow">
+            <button
+              onClick={() => setError('')}
+              className="absolute right-2 top-1.5 rounded p-1 text-rose-700/70 hover:bg-rose-100"
+              aria-label="Cerrar notificación de error"
+            >
+              ×
+            </button>
             ⚠️ {error}
           </div>
         )}
         {info && (
-          <div className="max-w-md w-full rounded-xl border bg-sky-50 text-sky-800 px-3 py-2 shadow">
+          <div className="pointer-events-auto relative max-w-md w-full rounded-xl border bg-sky-50 text-sky-800 px-3 py-2 shadow">
+            <button
+              onClick={() => setInfo('')}
+              className="absolute right-2 top-1.5 rounded p-1 text-sky-700/70 hover:bg-sky-100"
+              aria-label="Cerrar notificación informativa"
+            >
+              ×
+            </button>
             💡 {info}
           </div>
         )}
@@ -291,9 +304,9 @@ export default function PreEvalED1() {
 
       {/* Contenido */}
       <main className="max-w-7xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
-        {/* Columna principal */}
+        {/* Col principal */}
         <div>
-          {/* Barra de herramientas */}
+          {/* Toolbar */}
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <button
               onClick={() => {
@@ -348,16 +361,12 @@ export default function PreEvalED1() {
           ) : (
             <div className="space-y-6">
               {blocks.map((b, bIndex) => {
-                const bp = (()=>{
-                  const qs = questionsByBlock[b.id] || [];
-                  const done = qs.reduce((acc, q)=>
-                    acc + (q.tipo === 'opcion' ? !!selectedChoice[q.id] : !!(openAnswers[q.id]||'').trim()), 0
-                  );
-                  return { done, total: qs.length, pct: qs.length ? Math.round((done/qs.length)*100) : 0 };
-                })();
-
-                const isCol = !!collapsed[b.id];
                 const qs = questionsByBlock[b.id] || [];
+                const done = qs.reduce((acc, q)=>
+                  acc + (q.tipo === 'opcion' ? !!selectedChoice[q.id] : !!(openAnswers[q.id]||'').trim()), 0
+                );
+                const pct = qs.length ? Math.round((done/qs.length)*100) : 0;
+                const isCol = !!collapsed[b.id];
 
                 return (
                   <section
@@ -385,9 +394,9 @@ export default function PreEvalED1() {
                         </div>
                         <div className="mt-2">
                           <div className="h-2 bg-slate-200 rounded">
-                            <div className="h-2 rounded bg-indigo-600 transition-[width] duration-500" style={{ width: `${bp.pct}%` }} />
+                            <div className="h-2 rounded bg-indigo-600 transition-[width] duration-500" style={{ width: `${pct}%` }} />
                           </div>
-                          <div className="text-[11px] text-slate-500 mt-1">{bp.done}/{bp.total} ({bp.pct}%)</div>
+                          <div className="text-[11px] text-slate-500 mt-1">{done}/{qs.length} ({pct}%)</div>
                         </div>
                       </div>
                     </div>
@@ -458,43 +467,44 @@ export default function PreEvalED1() {
           )}
         </div>
 
-        {/* Sidebar */}
-        <aside className="lg:sticky lg:top-[64px] h-max space-y-4">
-          <div className="rounded-2xl border bg-white shadow-sm p-4">
-            <h3 className="font-bold mb-1">Progreso</h3>
-            <p className="text-xs text-slate-500 mb-2">Responde todo lo que puedas — puedes volver luego.</p>
-            <div className="mb-2">
-              <div className="flex items-center justify-between text-[11px] text-slate-500 mb-1">
-                <span>{respondidas}/{totalPreguntas}</span>
-                <span>{progresoPct}%</span>
+    {/* Sidebar */}
+          <aside className="lg:sticky lg:top-[64px] h-max space-y-4">
+            <div className="rounded-2xl border bg-white shadow-sm p-4">
+              <h3 className="font-bold mb-1">Progreso</h3>
+              <p className="text-xs text-slate-500 mb-2">Responde todo lo que puedas — puedes volver luego.</p>
+              <div className="mb-2">
+                <div className="flex items-center justify-between text-[11px] text-slate-500 mb-1">
+                  <span>{respondidas}/{totalPreguntas}</span>
+                  <span>{progresoPct}%</span>
+                </div>
+                <div className="h-2 bg-slate-200 rounded">
+                  <div className="h-2 bg-indigo-600 rounded transition-[width] duration-500" style={{ width: `${progresoPct}%` }} />
+                </div>
               </div>
-              <div className="h-2 bg-slate-200 rounded">
-                <div className="h-2 bg-indigo-600 rounded transition-[width] duration-500" style={{ width: `${progresoPct}%` }} />
+              <button
+                onClick={handleSubmit}
+                disabled={saving}
+                className="w-full px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-semibold shadow-sm"
+              >
+                {saving ? 'Guardando…' : 'Guardar'}
+              </button>
+              {ok && <p className="text-emerald-700 text-xs mt-2">✅ {ok}</p>}
+              {error && !loading && <p className="text-rose-700 text-xs mt-2">⚠️ {error}</p>}
+              <div className="text-[11px] text-slate-500 mt-2">
+                Borrador: {draftState === 'saving' ? 'guardando…' : 'guardado ✓'}
               </div>
             </div>
-            <button
-              onClick={handleSubmit}
-              disabled={saving}
-              className="w-full px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-semibold shadow-sm"
-            >
-              {saving ? 'Guardando…' : 'Guardar'}
-            </button>
-            {ok && <p className="text-emerald-700 text-xs mt-2">✅ {ok}</p>}
-            {error && !loading && <p className="text-rose-700 text-xs mt-2">⚠️ {error}</p>}
-            <div className="text-[11px] text-slate-500 mt-2">
-              Borrador: {draftState === 'saving' ? 'guardando…' : 'guardado ✓'}
-            </div>
-          </div>
 
-          {/* Tips rápidos */}
-          <div className="rounded-2xl border bg-white shadow-sm p-4">
-            <h3 className="font-bold mb-2">Atajos</h3>
-            <ul className="text-sm text-slate-600 space-y-1">
-              <li><kbd className="px-1.5 py-0.5 border rounded bg-slate-50">Ctrl/Cmd + S</kbd> Guardar</li>
-              <li><span className="px-1.5 py-0.5 border rounded bg-slate-50">⤡</span> Contraer / expandir bloque</li>
-            </ul>
-          </div>
-        </aside>
+            {/* Tips rápidos */}
+            <div className="rounded-2xl border bg-white shadow-sm p-4">
+              <h3 className="font-bold mb-2">Atajos</h3>
+              <ul className="text-sm text-slate-600 space-y-1">
+                <li><kbd className="px-1.5 py-0.5 border rounded bg-slate-50">Ctrl/Cmd + S</kbd> Guardar</li>
+                <li><span className="px-1.5 py-0.5 border rounded bg-slate-50">⤡</span> Contraer / expandir bloque</li>
+              </ul>
+            </div>
+          </aside>
+
       </main>
 
       {/* Botón flotante (móvil) */}

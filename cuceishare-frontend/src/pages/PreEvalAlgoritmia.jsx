@@ -1,3 +1,4 @@
+// src/pages/PreEvalAlgoritmia.jsx
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
@@ -53,7 +54,7 @@ export default function PreEvalAlgoritmia() {
   });
   const [draftState, setDraftState] = useState('saved');
 
-  // 👇 estado de colapsado (aquí estaba tu error: antes no existía / o estaba dentro del map)
+  // Estado de colapsado de bloques
   const [collapsed, setCollapsed] = useState({});
 
   const topRef = useRef(null);
@@ -186,16 +187,33 @@ export default function PreEvalAlgoritmia() {
         headers: { Authorization: `Bearer ${token}` },
       });
       setOk('¡Respuestas guardadas!');
-      setTimeout(() => setOk(''), 2000);
       topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (e) {
       if (e?.response?.status === 401) { navigate('/login', { replace: true }); return; }
       setError(e?.response?.data?.error || 'No se pudo guardar la pre-evaluación');
-      setTimeout(() => setError(''), 3000);
     } finally {
       setSaving(false);
     }
   }, [userId, token, navigate, questions, selectedChoice, openAnswers]);
+
+  // ===== Auto-ocultar toasts =====
+  useEffect(() => {
+    if (!ok) return;
+    const t = setTimeout(() => setOk(''), 2500);
+    return () => clearTimeout(t);
+  }, [ok]);
+
+  useEffect(() => {
+    if (!error) return;
+    const t = setTimeout(() => setError(''), 4000);
+    return () => clearTimeout(t);
+  }, [error]);
+
+  useEffect(() => {
+    if (!info) return;
+    const t = setTimeout(() => setInfo(''), 4500);
+    return () => clearTimeout(t);
+  }, [info]);
 
   // ===== Atajo Ctrl/Cmd+S =====
   const onKey = useCallback((e) => {
@@ -272,23 +290,46 @@ export default function PreEvalAlgoritmia() {
         </div>
       </header>
 
-      {/* Toasts */}
-      <div className="fixed inset-x-0 top-2 z-50 flex flex-col items-center gap-2 px-3">
-        {ok && (
-          <div className="max-w-md w-full rounded-xl border bg-emerald-50 text-emerald-800 px-3 py-2 shadow">
-            ✅ {ok}
-          </div>
-        )}
-        {error && (
-          <div className="max-w-md w-full rounded-xl border bg-rose-50 text-rose-800 px-3 py-2 shadow">
-            ⚠️ {error}
-          </div>
-        )}
-        {info && (
-          <div className="max-w-md w-full rounded-xl border bg-sky-50 text-sky-800 px-3 py-2 shadow">
-            💡 {info}
-          </div>
-        )}
+      {/* Toasts — superpuestos, con autocierre y botón ✕ */}
+      <div className="fixed top-2 left-1/2 -translate-x-1/2 z-[60] pointer-events-none px-3 w-full max-w-3xl">
+        <div className="flex flex-col items-center gap-2">
+          {ok && (
+            <div className="pointer-events-auto relative max-w-md w-full rounded-xl border bg-emerald-50 text-emerald-800 px-3 py-2 shadow">
+              <button
+                onClick={() => setOk('')}
+                aria-label="Cerrar notificación"
+                className="absolute -top-1.5 -right-1.5 h-6 w-6 grid place-items-center rounded-full border bg-white/80 text-slate-600 hover:bg-white shadow"
+              >
+                ×
+              </button>
+              ✅ {ok}
+            </div>
+          )}
+          {error && (
+            <div className="pointer-events-auto relative max-w-md w-full rounded-xl border bg-rose-50 text-rose-800 px-3 py-2 shadow">
+              <button
+                onClick={() => setError('')}
+                aria-label="Cerrar notificación"
+                className="absolute -top-1.5 -right-1.5 h-6 w-6 grid place-items-center rounded-full border bg-white/80 text-slate-600 hover:bg-white shadow"
+              >
+                ×
+              </button>
+              ⚠️ {error}
+            </div>
+          )}
+          {info && (
+            <div className="pointer-events-auto relative max-w-md w-full rounded-xl border bg-sky-50 text-sky-800 px-3 py-2 shadow">
+              <button
+                onClick={() => setInfo('')}
+                aria-label="Cerrar notificación"
+                className="absolute -top-1.5 -right-1.5 h-6 w-6 grid place-items-center rounded-full border bg-white/80 text-slate-600 hover:bg-white shadow"
+              >
+                ×
+              </button>
+              💡 {info}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Contenido */}
@@ -351,9 +392,10 @@ export default function PreEvalAlgoritmia() {
             <div className="space-y-6">
               {blocks.map((b, bIndex) => {
                 const qs = questionsByBlock[b.id] || [];
-                const done = qs.reduce((acc, q) =>
-                  acc + (q.tipo === 'opcion' ? !!selectedChoice[q.id] : !!(openAnswers[q.id] || '').trim()), 0
-                , 0);
+                const done = qs.reduce((acc, q) => {
+                  if (q.tipo === 'opcion') return acc + (selectedChoice[q.id] ? 1 : 0);
+                  return acc + ((openAnswers[q.id] || '').trim() ? 1 : 0);
+                }, 0);
                 const bpPct = qs.length ? Math.round((done / qs.length) * 100) : 0;
 
                 const isCol = !!collapsed[b.id];

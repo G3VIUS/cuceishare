@@ -28,8 +28,8 @@ export default function PreEvalTeoria() {
 
   // Draft key por usuario + materia (evita mezclar borradores)
   const draftKey = useMemo(
-    () => `tc:preeval:draft:${user?.id ?? 'anon'}`,
-    [user?.id]
+    () => `tc:preeval:draft:${userId ?? 'anon'}`,
+    [userId]
   );
 
   // Estado principal
@@ -57,13 +57,13 @@ export default function PreEvalTeoria() {
 
   // Redirect si no hay sesión
   useEffect(() => {
-    if (!user || !token) navigate('/login', { replace: true });
-  }, [user, token, navigate]);
+    if (!userId || !token) navigate('/login', { replace: true });
+  }, [userId, token, navigate]);
 
   // Carga banco de preguntas
   useEffect(() => {
     let alive = true;
-    if (!user || !token) return;
+    if (!userId || !token) return;
     (async () => {
       setLoading(true); setError('');
       try {
@@ -90,7 +90,7 @@ export default function PreEvalTeoria() {
       } finally { if (alive) setLoading(false); }
     })();
     return () => { alive = false; };
-  }, [user, token, navigate, draftKey]);
+  }, [userId, token, navigate, draftKey]);
 
   // Filtrado defensivo por materia
   useEffect(() => {
@@ -147,10 +147,10 @@ export default function PreEvalTeoria() {
   }, [questions, selectedChoice, openAnswers]);
   const progresoPct = totalPreguntas ? Math.round((respondidas / totalPreguntas) * 100) : 0;
 
-  // Guardar (POST) — ahora memorizado para que onKey tenga una ref estable
+  // Guardar (POST) — memoizado para atajo estable
   const handleSubmit = useCallback(async () => {
     setOk(''); setError('');
-    if (!user || !token) { navigate('/login', { replace: true }); return; }
+    if (!userId || !token) { navigate('/login', { replace: true }); return; }
     const respuestas = [];
     for (const q of questions) {
       if (q.tipo === 'opcion') {
@@ -168,14 +168,31 @@ export default function PreEvalTeoria() {
         headers: { Authorization: `Bearer ${token}` },
       });
       setOk('¡Respuestas guardadas!');
-      setTimeout(() => setOk(''), 2000);
       topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (e) {
       if (e?.response?.status === 401) { navigate('/login', { replace: true }); return; }
       setError(e?.response?.data?.error || 'No se pudo guardar la pre-evaluación');
-      setTimeout(() => setError(''), 3000);
     } finally { setSaving(false); }
-  }, [user, token, navigate, questions, selectedChoice, openAnswers]);
+  }, [userId, token, navigate, questions, selectedChoice, openAnswers]);
+
+  // Auto-ocultar toasts
+  useEffect(() => {
+    if (!ok) return;
+    const t = setTimeout(() => setOk(''), 2500);
+    return () => clearTimeout(t);
+  }, [ok]);
+
+  useEffect(() => {
+    if (!error) return;
+    const t = setTimeout(() => setError(''), 4000);
+    return () => clearTimeout(t);
+  }, [error]);
+
+  useEffect(() => {
+    if (!info) return;
+    const t = setTimeout(() => setInfo(''), 4500);
+    return () => clearTimeout(t);
+  }, [info]);
 
   // Atajo Ctrl/Cmd+S
   const onKey = useCallback((e) => {
@@ -193,7 +210,7 @@ export default function PreEvalTeoria() {
   // Helpers UI
   const shortId = (id) => String(id).slice(-4).padStart(4, '0');
 
-  if (!user || !token) return <div className="p-6 text-center">Redirigiendo…</div>;
+  if (!userId || !token) return <div className="p-6 text-center">Redirigiendo…</div>;
 
   return (
     <div ref={topRef} className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100">
@@ -215,7 +232,7 @@ export default function PreEvalTeoria() {
               <h1 className="text-lg md:text-xl font-bold tracking-tight text-slate-900">
                 Pre-evaluación — <span className="text-indigo-700">Teoría de la Computación</span>
               </h1>
-              <p className="text-[11px] text-slate-500">Usuario: <span className="font-mono">#{user.id}</span></p>
+              <p className="text-[11px] text-slate-500">Usuario: <span className="font-mono">#{userId}</span></p>
             </div>
           </div>
 
@@ -251,11 +268,46 @@ export default function PreEvalTeoria() {
         </div>
       </header>
 
-      {/* Toasts */}
-      <div className="fixed inset-x-0 top-2 z-50 flex flex-col items-center gap-2 px-3">
-        {ok && <div className="max-w-md w-full rounded-xl border bg-emerald-50 text-emerald-800 px-3 py-2 shadow">✅ {ok}</div>}
-        {error && <div className="max-w-md w-full rounded-xl border bg-rose-50 text-rose-800 px-3 py-2 shadow">⚠️ {error}</div>}
-        {info && <div className="max-w-md w-full rounded-xl border bg-sky-50 text-sky-800 px-3 py-2 shadow">💡 {info}</div>}
+      {/* Toasts — superpuestos, autocierre y botón ✕ */}
+      <div className="fixed top-2 left-1/2 -translate-x-1/2 z-[60] pointer-events-none px-3 w-full max-w-3xl">
+        <div className="flex flex-col items-center gap-2">
+          {ok && (
+            <div className="pointer-events-auto relative max-w-md w-full rounded-xl border bg-emerald-50 text-emerald-800 px-3 py-2 shadow">
+              <button
+                onClick={() => setOk('')}
+                aria-label="Cerrar notificación"
+                className="absolute -top-1.5 -right-1.5 h-6 w-6 grid place-items-center rounded-full border bg-white/80 text-slate-600 hover:bg-white shadow"
+              >
+                ×
+              </button>
+              ✅ {ok}
+            </div>
+          )}
+          {error && (
+            <div className="pointer-events-auto relative max-w-md w-full rounded-xl border bg-rose-50 text-rose-800 px-3 py-2 shadow">
+              <button
+                onClick={() => setError('')}
+                aria-label="Cerrar notificación"
+                className="absolute -top-1.5 -right-1.5 h-6 w-6 grid place-items-center rounded-full border bg-white/80 text-slate-600 hover:bg-white shadow"
+              >
+                ×
+              </button>
+              ⚠️ {error}
+            </div>
+          )}
+          {info && (
+            <div className="pointer-events-auto relative max-w-md w-full rounded-xl border bg-sky-50 text-sky-800 px-3 py-2 shadow">
+              <button
+                onClick={() => setInfo('')}
+                aria-label="Cerrar notificación"
+                className="absolute -top-1.5 -right-1.5 h-6 w-6 grid place-items-center rounded-full border bg-white/80 text-slate-600 hover:bg-white shadow"
+              >
+                ×
+              </button>
+              💡 {info}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Contenido */}
