@@ -18,27 +18,48 @@ const PORT = process.env.PORT || 3001;
 // Si corres detrás de proxy/reverse-proxy
 app.set('trust proxy', 1);
 
-// --- CORS (acepta varios orígenes y responde preflights) ---
+// --- CORS (acepta varios orígenes) ---
 const DEFAULT_ORIGINS = ['http://localhost:3000', 'http://localhost:5173'];
 const ALLOWED_ORIGINS = (process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(',').map(s => s.trim()).filter(Boolean)
   : DEFAULT_ORIGINS
 );
 
-// Validación dinámica de origen + soporte OPTIONS
+// Valida dinámicamente el Origin para peticiones normales
 const corsOptions = {
   origin(origin, cb) {
-    // permite health checks (sin origin) y los orígenes válidos
+    // Permite health checks (sin Origin) y los orígenes válidos
     if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
     return cb(new Error('Not allowed by CORS'));
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  // No fijamos allowedHeaders: cors reflejará los del preflight
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  // No fijamos allowedHeaders para que se reflejen los solicitados en el preflight
 };
 
+// **Manejador manual de preflight (OPTIONS) sin registrar path con '*'
+//   Evita el crash de path-to-regexp en algunas versiones.
+app.use((req, res, next) => {
+  if (req.method !== 'OPTIONS') return next();
+
+  const origin = req.headers.origin;
+  if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+    // Refleja el Origin permitido
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    // Refleja métodos/headers solicitados por el navegador
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    const reqHeaders = req.headers['access-control-request-headers'];
+    if (reqHeaders) res.setHeader('Access-Control-Allow-Headers', reqHeaders);
+    return res.sendStatus(204);
+  }
+  // Origin no permitido
+  return res.status(403).json({ error: 'CORS: Origin no permitido' });
+});
+
+// CORS para el resto de métodos (GET/POST/etc.)
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // responde preflights a cualquier ruta
 
 // Parsers (JSON y x-www-form-urlencoded)
 app.use(express.json({ limit: '10mb' }));
