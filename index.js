@@ -18,26 +18,27 @@ const PORT = process.env.PORT || 3001;
 // Si corres detrás de proxy/reverse-proxy
 app.set('trust proxy', 1);
 
-// CORS (acepta varios orígenes comunes)
-const DEFAULT_ORIGINS = [
-  'http://localhost:3000', // CRA
-  'http://localhost:5173', // Vite
-];
-const ALLOWED_ORIGINS = (() => {
-  const env = process.env.CORS_ORIGIN;
-  if (!env) return DEFAULT_ORIGINS;
-  // Permite una lista separada por comas en CORS_ORIGIN
-  return env.split(',').map(s => s.trim()).filter(Boolean);
-})();
-
-app.use(
-  cors({
-    origin: ALLOWED_ORIGINS,
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-  })
+// --- CORS (acepta varios orígenes y responde preflights) ---
+const DEFAULT_ORIGINS = ['http://localhost:3000', 'http://localhost:5173'];
+const ALLOWED_ORIGINS = (process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map(s => s.trim()).filter(Boolean)
+  : DEFAULT_ORIGINS
 );
+
+// Validación dinámica de origen + soporte OPTIONS
+const corsOptions = {
+  origin(origin, cb) {
+    // permite health checks (sin origin) y los orígenes válidos
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    return cb(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  // No fijamos allowedHeaders: cors reflejará los del preflight
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // responde preflights a cualquier ruta
 
 // Parsers (JSON y x-www-form-urlencoded)
 app.use(express.json({ limit: '10mb' }));
@@ -63,7 +64,6 @@ app.use('/api/mineria', require('./routes/route-mineria'));    // Minería de Da
 app.use('/api/redes', require('./routes/route-redes'));        // Redes
 app.use('/api/algoritmia', require('./routes/route-algoritmia'));
 app.use('/api/teoria', require('./routes/route-teoria'));
-
 
 /* =======================
    Healthcheck y raíz
