@@ -1,4 +1,3 @@
-// src/App.js
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 
 // Layout
@@ -37,9 +36,21 @@ import RouteRedes from './pages/RouteRedes';
 import PreEvalAlgoritmia from './pages/PreEvalAlgoritmia';
 import RouteAlgoritmia from './pages/RouteAlgoritmia';
 
-// Teoría de la Computación (nuevo)
+// Teoría de la Computación
 import PreEvalTeoria from './pages/PreEvalTeoria';
 import RouteTeoria from './pages/RouteTeoria';
+
+// Programación
+import PreEvalProgramacion from './pages/PreEvalProgramacion';
+import RouteProgramacion from './pages/RouteProgramacion';
+
+// Ingeniería de Software
+import PreEvalIngSoftware from './pages/PreEvalIngSoftware';
+import RouteIngSoftware from './pages/RouteIngSoftware';
+
+// Seguridad de la Información (NUEVA)
+import PreEvalSegInfo from './pages/PreEvalSegInfo';
+import RouteSegInfo from './pages/RouteSegInfo';
 
 // ---- Protecciones ----
 function ProtectedRoute({ children }) {
@@ -193,7 +204,7 @@ export default function App() {
             }
           />
 
-          {/* Teoría de la Computación (nuevo) */}
+          {/* Teoría de la Computación */}
           <Route
             path="/pre-eval/teoria"
             element={
@@ -207,6 +218,78 @@ export default function App() {
             element={
               <ProtectedRouteToken>
                 <RouteTeoria />
+              </ProtectedRouteToken>
+            }
+          />
+
+          {/* Programación */}
+          <Route
+            path="/pre-eval/programacion"
+            element={
+              <ProtectedRouteToken>
+                <PreEvalProgramacion />
+              </ProtectedRouteToken>
+            }
+          />
+          <Route
+            path="/ruta/programacion"
+            element={
+              <ProtectedRouteToken>
+                <RouteProgramacion />
+              </ProtectedRouteToken>
+            }
+          />
+
+          {/* Ingeniería de Software */}
+          <Route
+            path="/pre-eval/ingsoft"
+            element={
+              <ProtectedRouteToken>
+                <PreEvalIngSoftware />
+              </ProtectedRouteToken>
+            }
+          />
+          <Route
+            path="/ruta/ingsoft"
+            element={
+              <ProtectedRouteToken>
+                <RouteIngSoftware />
+              </ProtectedRouteToken>
+            }
+          />
+
+          {/* Seguridad de la Información (principal: seginf) */}
+          <Route
+            path="/pre-eval/seginf"
+            element={
+              <ProtectedRouteToken>
+                <PreEvalSegInfo />
+              </ProtectedRouteToken>
+            }
+          />
+          <Route
+            path="/ruta/seginf"
+            element={
+              <ProtectedRouteToken>
+                <RouteSegInfo />
+              </ProtectedRouteToken>
+            }
+          />
+
+          {/* Alias para compatibilidad con /seguridad */}
+          <Route
+            path="/pre-eval/seguridad"
+            element={
+              <ProtectedRouteToken>
+                <PreEvalSegInfo />
+              </ProtectedRouteToken>
+            }
+          />
+          <Route
+            path="/ruta/seguridad"
+            element={
+              <ProtectedRouteToken>
+                <RouteSegInfo />
               </ProtectedRouteToken>
             }
           />
