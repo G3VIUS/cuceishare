@@ -1,4 +1,4 @@
-// src/pages/PreEvalED1.jsx
+// src/pages/PreEvalProgramacion.jsx
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
@@ -8,7 +8,7 @@ const API =
   process.env.REACT_APP_API_URL ||
   'http://localhost:3001';
 
-const SUBJECT_SLUG = 'ed1';
+const SUBJECT_SLUG = 'programacion'; // 👈 materia Programación
 
 const cx = (...xs) => xs.filter(Boolean).join(' ');
 const Icon = ({ children, className='' }) => (
@@ -16,10 +16,10 @@ const Icon = ({ children, className='' }) => (
 );
 const Skeleton = ({ className='' }) => <div className={cx('animate-pulse bg-gray-200/70 rounded', className)} />;
 
-export default function PreEvalED1() {
+export default function PreEvalProgramacion() {
   const navigate = useNavigate();
 
-  // Session
+  // Sesión
   const user = useMemo(() => {
     try { return JSON.parse(localStorage.getItem('usuario') || 'null'); } catch { return null; }
   }, []);
@@ -27,7 +27,7 @@ export default function PreEvalED1() {
 
   // Draft key por usuario + materia
   const draftKey = useMemo(
-    () => `ed1:preeval:draft:${user?.id ?? 'anon'}`,
+    () => `prog:preeval:draft:${user?.id ?? 'anon'}`,
     [user?.id]
   );
 
@@ -38,6 +38,7 @@ export default function PreEvalED1() {
   const [choices, setChoices] = useState([]);
   const [openKeys, setOpenKeys] = useState([]);
 
+  // UI
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -59,14 +60,14 @@ export default function PreEvalED1() {
     if (!user || !token) navigate('/login', { replace: true });
   }, [user, token, navigate]);
 
-  // Carga banco de preguntas
+  // Cargar banco de preguntas
   useEffect(() => {
     let alive = true;
     if (!user || !token) return;
     (async () => {
       setLoading(true); setError('');
       try {
-        const { data } = await axios.get(`${API}/api/ed1/pre-eval`, {
+        const { data } = await axios.get(`${API}/api/programacion/pre-eval`, {
           headers: { Authorization: `Bearer ${token}` },
           params: { subjectSlug: SUBJECT_SLUG, _t: Date.now() },
         });
@@ -91,7 +92,7 @@ export default function PreEvalED1() {
     return () => { alive = false; };
   }, [user, token, navigate, draftKey]);
 
-  // Filtrado defensivo
+  // Filtrado defensivo por materia
   useEffect(() => {
     const subjectId = raw?.subject?.id || null;
 
@@ -146,7 +147,7 @@ export default function PreEvalED1() {
   }, [questions, selectedChoice, openAnswers]);
   const progresoPct = totalPreguntas ? Math.round((respondidas / totalPreguntas) * 100) : 0;
 
-  // Guardar (POST)
+  // Guardar (POST) — memoizado
   const handleSubmit = useCallback(async () => {
     setOk(''); setError('');
     if (!user || !token) { navigate('/login', { replace: true }); return; }
@@ -163,32 +164,21 @@ export default function PreEvalED1() {
     if (!respuestas.length) { setError('No has respondido ninguna pregunta.'); return; }
     try {
       setSaving(true);
-      await axios.post(`${API}/api/ed1/attempts`, { subjectSlug: SUBJECT_SLUG, respuestas }, {
+      await axios.post(`${API}/api/programacion/attempts`, { subjectSlug: SUBJECT_SLUG, respuestas }, {
         headers: { Authorization: `Bearer ${token}` },
       });
       setOk('¡Respuestas guardadas!');
-      setTimeout(() => setOk(''), 2000);
       topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (e) {
       if (e?.response?.status === 401) { navigate('/login', { replace: true }); return; }
       setError(e?.response?.data?.error || 'No se pudo guardar la pre-evaluación');
-      setTimeout(() => setError(''), 3000);
     } finally { setSaving(false); }
-  }, [user, token, questions, selectedChoice, openAnswers, navigate]);
+  }, [user, token, navigate, questions, selectedChoice, openAnswers]);
 
-  // Auto-cierre del toast informativo
-  useEffect(() => {
-    if (!info) return;
-    const t = setTimeout(() => setInfo(''), 4000);
-    return () => clearTimeout(t);
-  }, [info]);
-
-  // Esc para cerrar toasts
-  useEffect(() => {
-    const onEsc = (e) => { if (e.key === 'Escape') { setOk(''); setError(''); setInfo(''); } };
-    window.addEventListener('keydown', onEsc);
-    return () => window.removeEventListener('keydown', onEsc);
-  }, []);
+  // Auto-cierre toasts + botón cerrar
+  useEffect(() => { if (!ok) return; const t = setTimeout(() => setOk(''), 2500); return () => clearTimeout(t); }, [ok]);
+  useEffect(() => { if (!error) return; const t = setTimeout(() => setError(''), 4000); return () => clearTimeout(t); }, [error]);
+  useEffect(() => { if (!info) return; const t = setTimeout(() => setInfo(''), 4500); return () => clearTimeout(t); }, [info]);
 
   // Atajo Ctrl/Cmd+S
   const onKey = useCallback((e) => {
@@ -197,10 +187,7 @@ export default function PreEvalED1() {
       e.preventDefault(); handleSubmit();
     }
   }, [handleSubmit]);
-  useEffect(() => {
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onKey]);
+  useEffect(() => { window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey); }, [onKey]);
 
   const shortId = (id) => String(id).slice(-4).padStart(4, '0');
 
@@ -210,30 +197,28 @@ export default function PreEvalED1() {
     <div ref={topRef} className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100">
       {/* App Bar */}
       <header className="sticky top-0 z-40 border-b bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/60">
-        <div className="max-w-7xl mx-auto px-3 sm:px-4 py-2 sm:py-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-            <Icon className="h-8 w-8 sm:h-9 sm:w-9 bg-indigo-600/10 text-indigo-700">📝</Icon>
+        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+          {/* Breadcrumb + título */}
+          <div className="flex items-center gap-3 min-w-0">
+            <Icon className="h-9 w-9 bg-indigo-600/10 text-indigo-700">📝</Icon>
             <div className="truncate">
-              {/* En móvil, breadcrumb reducido */}
-              <nav className="hidden sm:block text-xs text-slate-500 truncate" aria-label="Breadcrumb">
+              <nav className="text-xs text-slate-500 truncate" aria-label="Breadcrumb">
                 <ol className="flex items-center gap-1">
-                  <li className="cursor-default">Aprendizaje</li>
+                  <li className="hover:text-slate-700 cursor-default">Aprendizaje</li>
                   <li className="text-slate-400">/</li>
-                  <li className="cursor-default">ED I</li>
+                  <li className="hover:text-slate-700 cursor-default">Programación</li>
                   <li className="text-slate-400">/</li>
                   <li className="text-slate-700 font-medium truncate">Pre-evaluación</li>
                 </ol>
               </nav>
-              <h1 className="text-base sm:text-lg md:text-xl font-bold tracking-tight text-slate-900 leading-tight">
-                Pre-evaluación — <span className="text-indigo-700">Estructuras de Datos I</span>
+              <h1 className="text-lg md:text-xl font-bold tracking-tight">
+                Pre-evaluación — <span className="text-indigo-700">Programación</span>
               </h1>
-              <p className="hidden sm:block text-[11px] text-slate-500">
-                Usuario: <span className="font-mono">#{user.id}</span>
-              </p>
+              <p className="text-[11px] text-slate-500">Usuario: <span className="font-mono">#{user.id}</span></p>
             </div>
           </div>
 
-          {/* Desktop: progreso + acciones; móvil: se muestra abajo en una barra pegajosa */}
+          {/* Progreso + acciones */}
           <div className="hidden md:flex items-center gap-3">
             <div className="w-48">
               <div className="flex items-center justify-between text-[11px] text-slate-500 mb-1">
@@ -249,102 +234,68 @@ export default function PreEvalED1() {
               </div>
             </div>
             <button
-              onClick={() => navigate('/ruta/ed1')}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm shadow-sm"
+              onClick={() => navigate('/ruta/programacion')}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm shadow-sm"
             >
               📈 Ver mi ruta
             </button>
             <button
               onClick={handleSubmit}
               disabled={saving}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-sm shadow-sm"
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-sm shadow-sm"
               title="Ctrl/Cmd + S"
             >
               💾 {saving ? 'Guardando…' : 'Guardar'}
             </button>
           </div>
         </div>
-
-        {/* Progreso compacto SOLO móvil bajo el header */}
-        <div className="md:hidden px-3 pb-2">
-          <div className="flex items-center justify-between text-[11px] text-slate-500 mb-1">
-            <span>{respondidas}/{totalPreguntas}</span>
-            <span>{progresoPct}%</span>
-          </div>
-          <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
-            <div className="h-2 rounded-full bg-indigo-600 transition-[width] duration-500" style={{ width: `${progresoPct}%` }} />
-          </div>
-        </div>
       </header>
 
-      {/* Toasts */}
-      <div className="fixed inset-x-0 top-2 z-[60] flex flex-col items-center gap-2 px-3 pointer-events-none">
-        {ok && (
-          <div className="pointer-events-auto relative max-w-md w-full rounded-xl border bg-emerald-50 text-emerald-800 px-3 py-2 shadow">
-            <button
-              onClick={() => setOk('')}
-              className="absolute right-2 top-1.5 rounded p-1 text-emerald-700/70 hover:bg-emerald-100"
-              aria-label="Cerrar notificación de éxito"
-            >
-              ×
-            </button>
-            ✅ {ok}
-          </div>
-        )}
-        {error && (
-          <div className="pointer-events-auto relative max-w-md w-full rounded-xl border bg-rose-50 text-rose-800 px-3 py-2 shadow">
-            <button
-              onClick={() => setError('')}
-              className="absolute right-2 top-1.5 rounded p-1 text-rose-700/70 hover:bg-rose-100"
-              aria-label="Cerrar notificación de error"
-            >
-              ×
-            </button>
-            ⚠️ {error}
-          </div>
-        )}
-        {info && (
-          <div className="pointer-events-auto relative max-w-md w-full rounded-xl border bg-sky-50 text-sky-800 px-3 py-2 shadow">
-            <button
-              onClick={() => setInfo('')}
-              className="absolute right-2 top-1.5 rounded p-1 text-sky-700/70 hover:bg-sky-100"
-              aria-label="Cerrar notificación informativa"
-            >
-              ×
-            </button>
-            💡 {info}
-          </div>
-        )}
+      {/* Toasts (superpuestos, autocierre y botón ✕) */}
+      <div className="fixed top-2 left-1/2 -translate-x-1/2 z-[60] pointer-events-none px-3 w-full max-w-3xl">
+        <div className="flex flex-col items-center gap-2">
+          {ok && (
+            <div className="pointer-events-auto relative max-w-md w/full rounded-xl border bg-emerald-50 text-emerald-800 px-3 py-2 shadow">
+              <button onClick={() => setOk('')} aria-label="Cerrar" className="absolute -top-1.5 -right-1.5 h-6 w-6 grid place-items-center rounded-full border bg-white/80 text-slate-600 hover:bg-white shadow">×</button>
+              ✅ {ok}
+            </div>
+          )}
+          {error && (
+            <div className="pointer-events-auto relative max-w-md w/full rounded-xl border bg-rose-50 text-rose-800 px-3 py-2 shadow">
+              <button onClick={() => setError('')} aria-label="Cerrar" className="absolute -top-1.5 -right-1.5 h-6 w-6 grid place-items-center rounded-full border bg-white/80 text-slate-600 hover:bg-white shadow">×</button>
+              ⚠️ {error}
+            </div>
+          )}
+          {info && (
+            <div className="pointer-events-auto relative max-w-md w/full rounded-xl border bg-sky-50 text-sky-800 px-3 py-2 shadow">
+              <button onClick={() => setInfo('')} aria-label="Cerrar" className="absolute -top-1.5 -right-1.5 h-6 w-6 grid place-items-center rounded-full border bg-white/80 text-slate-600 hover:bg-white shadow">×</button>
+              💡 {info}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Contenido */}
-      <main className="max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6 grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4 sm:gap-6">
-        {/* Col principal */}
+      <main className="max-w-7xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
+        {/* Columna principal */}
         <div>
-          {/* Toolbar: botones más grandes en móvil */}
-          <div className="mb-3 sm:mb-4 flex flex-wrap items-center gap-2">
+          {/* Toolbar */}
+          <div className="mb-4 flex flex-wrap items-center gap-2">
             <button
-              onClick={() => {
-                const next = {}; blocks.forEach(b => next[b.id] = false); setCollapsed(next);
-              }}
-              className="px-3 py-2 rounded-full border bg-white hover:bg-slate-50 text-slate-700 shadow-sm active:scale-[0.99]"
+              onClick={() => { const next = {}; blocks.forEach(b => next[b.id] = false); setCollapsed(next); }}
+              className="px-3 py-1.5 rounded-full border bg-white hover:bg-slate-50 text-slate-700"
             >
               Expandir todo
             </button>
             <button
-              onClick={() => {
-                const next = {}; blocks.forEach(b => next[b.id] = true); setCollapsed(next);
-              }}
-              className="px-3 py-2 rounded-full border bg-white hover:bg-slate-50 text-slate-700 shadow-sm active:scale-[0.99]"
+              onClick={() => { const next = {}; blocks.forEach(b => next[b.id] = true); setCollapsed(next); }}
+              className="px-3 py-1.5 rounded-full border bg-white hover:bg-slate-50 text-slate-700"
             >
               Contraer todo
             </button>
-            <div className="ml-auto hidden sm:flex items-center gap-3 text-xs">
+            <div className="ml-auto flex items-center gap-3 text-xs">
               <kbd className="px-2 py-1 rounded bg-slate-100 text-slate-700 border">Ctrl/Cmd + S</kbd>
-              <span className={cx(
-                'px-2 py-1 rounded',
-                draftState === 'saving' ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-800'
-              )}>
+              <span className={cx('px-2 py-1 rounded', draftState === 'saving' ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-800')}>
                 {draftState === 'saving' ? 'Guardando borrador…' : 'Borrador guardado ✓'}
               </span>
             </div>
@@ -352,11 +303,11 @@ export default function PreEvalED1() {
 
           {/* Estados */}
           {loading ? (
-            <div className="space-y-3 sm:space-y-4">
-              <Skeleton className="h-7 w-56" />
-              <div className="grid sm:grid-cols-2 gap-3 sm:gap-4">
+            <div className="space-y-4">
+              <Skeleton className="h-8 w-64" />
+              <div className="grid md:grid-cols-2 gap-4">
                 {Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} className="p-4 sm:p-5 bg-white rounded-2xl shadow border">
+                  <div key={i} className="p-5 bg-white rounded-2xl shadow border">
                     <Skeleton className="h-5 w-40 mb-3" />
                     <Skeleton className="h-4 w-full mb-2" />
                     <Skeleton className="h-4 w-4/5 mb-2" />
@@ -374,7 +325,7 @@ export default function PreEvalED1() {
               <p className="text-slate-600 text-sm">Aún no hay preguntas disponibles para esta pre-evaluación.</p>
             </div>
           ) : (
-            <div className="space-y-4 sm:space-y-6">
+            <div className="space-y-6">
               {blocks.map((b, bIndex) => {
                 const qs = questionsByBlock[b.id] || [];
                 const done = qs.reduce((acc, q)=>
@@ -384,16 +335,12 @@ export default function PreEvalED1() {
                 const isCol = !!collapsed[b.id];
 
                 return (
-                  <section
-                    key={b.id}
-                    className="bg-white rounded-2xl shadow-sm border overflow-hidden transition-all"
-                    aria-label={`Bloque ${b.titulo}`}
-                  >
+                  <section key={b.id} className="bg-white rounded-2xl shadow-sm border overflow-hidden transition-all" aria-label={`Bloque ${b.titulo}`}>
                     {/* Header de bloque */}
-                    <div className="px-4 sm:px-5 py-3 sm:py-4 flex items-center gap-3">
+                    <div className="px-5 py-4 flex items-center gap-3">
                       <button
                         onClick={() => setCollapsed(p => ({ ...p, [b.id]: !p[b.id] }))}
-                        className="shrink-0 h-9 w-9 grid place-items-center rounded-xl bg-slate-100 hover:bg-slate-200 active:scale-[0.98]"
+                        className="shrink-0 h-8 w-8 grid place-items-center rounded-lg bg-slate-100 hover:bg-slate-200"
                         aria-expanded={!isCol}
                         aria-controls={`block-${b.id}`}
                         title={isCol ? 'Expandir bloque' : 'Contraer bloque'}
@@ -405,7 +352,7 @@ export default function PreEvalED1() {
                           <span className="inline-flex items-center justify-center h-6 px-2 rounded-full bg-indigo-50 text-indigo-700 text-xs font-semibold">
                             Bloque {bIndex + 1}
                           </span>
-                          <h2 className="text-base sm:text-lg md:text-xl font-bold truncate">{b.titulo}</h2>
+                          <h2 className="text-lg md:text-xl font-bold truncate">{b.titulo}</h2>
                         </div>
                         <div className="mt-2">
                           <div className="h-2 bg-slate-200 rounded">
@@ -418,30 +365,27 @@ export default function PreEvalED1() {
 
                     {/* Contenido de bloque */}
                     {!isCol && (
-                      <div id={`block-${b.id}`} className="px-4 sm:px-5 pb-4 sm:pb-5 space-y-3 sm:space-y-5">
+                      <div id={`block-${b.id}`} className="px-5 pb-5 space-y-5">
                         {qs.map((q, idx) => (
-                          <article key={q.id} className="border rounded-2xl p-3 sm:p-4 hover:shadow-sm transition-shadow focus-within:ring-1 focus-within:ring-indigo-200">
-                            <div className="mb-2 sm:mb-3 flex items-start gap-3">
+                          <article key={q.id} className="border rounded-xl p-4 hover:shadow-sm transition-shadow focus-within:ring-1 focus-within:ring-indigo-200">
+                            <div className="mb-3 flex items-start gap-3">
                               <Icon className="h-7 w-7 bg-indigo-50 text-indigo-700 text-xs">{idx + 1}</Icon>
-                              <h3 className="font-medium leading-6 text-[15px] sm:text-base">{q.enunciado}</h3>
-                              <span className="ml-auto text-[10px] sm:text-[11px] text-slate-400">ID …{shortId(q.id)}</span>
+                              <h3 className="font-medium leading-6">{q.enunciado}</h3>
+                              <span className="ml-auto text-[11px] text-slate-400">ID …{String(q.id).slice(-4).padStart(4,'0')}</span>
                             </div>
 
                             {q.tipo === 'opcion' ? (
-                              <fieldset className="pl-1 sm:pl-10 space-y-2" aria-label={`Opciones de la pregunta ${idx + 1}`}>
+                              <fieldset className="ml-10 space-y-2" aria-label={`Opciones de la pregunta ${idx + 1}`}>
                                 {(choicesByQ[q.id] || []).map(c => {
                                   const checked = String(selectedChoice[q.id] || '') === String(c.id);
                                   return (
-                                    <label
-                                      key={c.id}
-                                      className={cx(
-                                        'flex items-start gap-2 cursor-pointer rounded-xl border p-2 sm:p-2.5 hover:bg-slate-50 focus-within:ring-2 focus-within:ring-indigo-300',
-                                        checked ? 'border-indigo-300 bg-indigo-50/40' : 'border-slate-200'
-                                      )}
-                                    >
+                                    <label key={c.id} className={cx(
+                                      'flex items-start gap-2 cursor-pointer rounded-lg border p-2 hover:bg-slate-50 focus-within:ring-2 focus-within:ring-indigo-300',
+                                      checked ? 'border-indigo-300 bg-indigo-50/40' : 'border-slate-200'
+                                    )}>
                                       <input
                                         type="radio"
-                                        className="mt-0.5 h-5 w-5 accent-indigo-600"
+                                        className="mt-1 accent-indigo-600"
                                         name={`q_${q.id}`}
                                         value={c.id}
                                         checked={checked}
@@ -449,15 +393,15 @@ export default function PreEvalED1() {
                                         aria-checked={checked}
                                         aria-label={c.texto}
                                       />
-                                      <span className="text-[15px] sm:text-base">{c.texto}</span>
+                                      <span>{c.texto}</span>
                                     </label>
                                   );
                                 })}
                               </fieldset>
                             ) : (
-                              <div className="pl-1 sm:pl-10">
+                              <div className="ml-10">
                                 <textarea
-                                  className="w-full border rounded-2xl p-3 focus:ring-2 focus:ring-indigo-300"
+                                  className="w-full border rounded-lg p-3 focus:ring-2 focus:ring-indigo-300"
                                   rows={3}
                                   placeholder="Escribe tu respuesta…"
                                   value={openAnswers[q.id] || ''}
@@ -482,7 +426,7 @@ export default function PreEvalED1() {
           )}
         </div>
 
-        {/* Sidebar (en móvil se mueve abajo automáticamente por la grid) */}
+        {/* Sidebar */}
         <aside className="lg:sticky lg:top-[64px] h-max space-y-4">
           <div className="rounded-2xl border bg-white shadow-sm p-4">
             <h3 className="font-bold mb-1">Progreso</h3>
@@ -499,7 +443,7 @@ export default function PreEvalED1() {
             <button
               onClick={handleSubmit}
               disabled={saving}
-              className="w-full px-4 py-2 rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-semibold shadow-sm"
+              className="w-full px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-semibold shadow-sm"
             >
               {saving ? 'Guardando…' : 'Guardar'}
             </button>
@@ -507,6 +451,15 @@ export default function PreEvalED1() {
             {error && !loading && <p className="text-rose-700 text-xs mt-2">⚠️ {error}</p>}
             <div className="text-[11px] text-slate-500 mt-2">
               Borrador: {draftState === 'saving' ? 'guardando…' : 'guardado ✓'}
+            </div>
+
+            <div className="mt-3">
+              <button
+                onClick={() => navigate('/ruta/programacion')}
+                className="w-full px-4 py-2 rounded-xl border bg-white hover:bg-slate-50 text-slate-800 font-semibold shadow-sm"
+              >
+                📈 Ver mi ruta
+              </button>
             </div>
           </div>
 
@@ -520,32 +473,22 @@ export default function PreEvalED1() {
         </aside>
       </main>
 
-      {/* Barra de acciones pegajosa (móvil) */}
-      <div className="md:hidden sticky bottom-0 inset-x-0 z-40">
-        <div className="border-t bg-white/95 backdrop-blur px-3 py-2">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => navigate('/ruta/ed1')}
-              className="flex-1 inline-flex items-center justify-center gap-2 rounded-full border px-4 py-2 bg-white text-slate-700 shadow-sm"
-            >
-              📈 Ruta
-            </button>
-            <button
-              onClick={handleSubmit}
-              disabled={saving}
-              className="flex-[2] inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 bg-indigo-600 text-white shadow-sm disabled:opacity-60"
-              aria-label="Guardar respuestas"
-            >
-              💾 {saving ? 'Guardando…' : 'Guardar'}
-            </button>
-          </div>
-        </div>
+      {/* Botón flotante (móvil) */}
+      <div className="fixed bottom-4 right-4 z-40 md:hidden">
+        <button
+          onClick={handleSubmit}
+          disabled={saving}
+          className="h-12 px-5 rounded-full shadow-lg text-white font-semibold bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60"
+          aria-label="Guardar respuestas"
+        >
+          {saving ? 'Guardando…' : 'Guardar'}
+        </button>
       </div>
 
       {/* Footer */}
-      <footer className="hidden sm:block border-t bg-white/70">
+      <footer className="border-t bg-white/70">
         <div className="max-w-7xl mx-auto px-4 py-3 text-[11px] text-slate-500 flex items-center justify-between">
-          <span>Pre-evaluación ED I</span>
+          <span>Pre-evaluación Programación</span>
           <span>Ctrl/Cmd + S para guardar rápido</span>
         </div>
       </footer>
