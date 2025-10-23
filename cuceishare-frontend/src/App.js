@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 
 // Layout
 import Navbar from './Navbar';
@@ -48,26 +48,63 @@ import RouteProgramacion from './pages/RouteProgramacion';
 import PreEvalIngSoftware from './pages/PreEvalIngSoftware';
 import RouteIngSoftware from './pages/RouteIngSoftware';
 
-// Seguridad de la Información (NUEVA)
+// Seguridad de la Información
 import PreEvalSegInfo from './pages/PreEvalSegInfo';
 import RouteSegInfo from './pages/RouteSegInfo';
+
+// ⚙️ Admin (separados)
+import AdminApuntes from './pages/AdminApuntes';
+import AdminContenido from './pages/AdminContenido';
+
+// ---- Helpers de guards ----
+function useNext() {
+  const loc = useLocation();
+  const next = encodeURIComponent(loc.pathname + (loc.search || ''));
+  return `?next=${next}`;
+}
+function isAdmin() {
+  try {
+    const u = JSON.parse(localStorage.getItem('usuario')) || {};
+    return String(u?.tipo || '').toLowerCase().includes('admin');
+  } catch { return false; }
+}
 
 // ---- Protecciones ----
 function ProtectedRoute({ children }) {
   const token = localStorage.getItem('token');
-  const legacyUser = localStorage.getItem('usuario'); // compatibilidad
-  return (token || legacyUser) ? children : <Navigate to="/login" replace />;
+  const legacyUser = localStorage.getItem('usuario'); // compat
+  const next = useNext();
+  return (token || legacyUser) ? children : <Navigate to={`/login${next}`} replace />;
 }
 function ProtectedRouteToken({ children }) {
   const token = localStorage.getItem('token');
-  return token ? children : <Navigate to="/login" replace />;
+  const next = useNext();
+  return token ? children : <Navigate to={`/login${next}`} replace />;
+}
+function ProtectedAdminRoute({ children }) {
+  const token = localStorage.getItem('token');
+  const next = useNext();
+  if (!token) return <Navigate to={`/login${next}`} replace />;
+  if (!isAdmin()) return <Navigate to="/" replace />;
+  return children;
+}
+
+function Layout({ children }) {
+  const loc = useLocation();
+  const isAdminPath = loc.pathname.startsWith('/admin');
+  return (
+    <>
+      {/* Ocultar Navbar en modo admin */}
+      {!isAdminPath && <Navbar />}
+      <div className="p-4">{children}</div>
+    </>
+  );
 }
 
 export default function App() {
   return (
     <Router>
-      <Navbar />
-      <div className="p-4">
+      <Layout>
         <Routes>
           {/* Públicas */}
           <Route path="/" element={<Home />} />
@@ -75,6 +112,25 @@ export default function App() {
           <Route path="/apunte/:id" element={<VistaApunte />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+
+          {/* ⚙️ Admin */}
+          <Route path="/admin" element={<Navigate to="/admin/apuntes" replace />} />
+          <Route
+            path="/admin/apuntes"
+            element={
+              <ProtectedAdminRoute>
+                <AdminApuntes />
+              </ProtectedAdminRoute>
+            }
+          />
+          <Route
+            path="/admin/contenido"
+            element={
+              <ProtectedAdminRoute>
+                <AdminContenido />
+              </ProtectedAdminRoute>
+            }
+          />
 
           {/* Protegidas (subir/perfil) */}
           <Route
@@ -258,7 +314,7 @@ export default function App() {
             }
           />
 
-          {/* Seguridad de la Información (principal: seginf) */}
+          {/* Seguridad de la Información */}
           <Route
             path="/pre-eval/seginf"
             element={
@@ -275,8 +331,7 @@ export default function App() {
               </ProtectedRouteToken>
             }
           />
-
-          {/* Alias para compatibilidad con /seguridad */}
+          {/* Alias /seguridad */}
           <Route
             path="/pre-eval/seguridad"
             element={
@@ -297,7 +352,7 @@ export default function App() {
           {/* Fallback */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
-      </div>
+      </Layout>
     </Router>
   );
 }

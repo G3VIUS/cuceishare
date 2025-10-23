@@ -78,6 +78,8 @@ app.use('/api/teoria',        require('./routes/route-teoria'));       // Teorí
 app.use('/api/programacion',  require('./routes/route-programacion')); // Programación
 app.use('/api/ingsoft',       require('./routes/route-ingsoft'));      // Ingeniería de Software
 app.use('/api/seginf',     require('./routes/route-seginf'));
+app.use('/admin/apuntes',  require('./routes/admin-apuntes'));
+app.use('/admin/contenido', require('./routes/admin-contenido'));
 
 /* =======================
    Healthcheck y raíz

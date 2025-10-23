@@ -6,12 +6,21 @@ import axios from 'axios';
 /* ======================
    Config & helpers
 ====================== */
-const API = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+const API =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) ||
+  process.env.REACT_APP_API_URL ||
+  'http://localhost:3001';
 
 const SUBJECTS = [
-  { slug: 'ed1', nombre: 'Estructuras de Datos I' },
+  { slug: 'ed1',                   nombre: 'Estructuras de Datos I' },
   { slug: 'administracion-servidores', nombre: 'Administración de Servidores' },
-  // { slug: 'mineria-datos', nombre: 'Minería de Datos' },
+  { slug: 'mineria-datos',         nombre: 'Minería de Datos' },
+  { slug: 'redes',                 nombre: 'Redes' },
+  { slug: 'algoritmia',            nombre: 'Algoritmia' },
+  { slug: 'programacion',          nombre: 'Programación' },
+  { slug: 'ingenieria-software',   nombre: 'Ingeniería de Software' },
+  { slug: 'seguridad-informacion', nombre: 'Seguridad de la Información' },
+  { slug: 'teoria-computacion',    nombre: 'Teoría de la Computación' },
 ];
 
 const LS_SUBJECT = 'lastSubjectSlug';
@@ -48,7 +57,7 @@ export default function SubirApunte() {
   }, []);
   const autor = sesion?.username || sesion?.tipo || `user-${sesion?.id ?? ''}`;
 
-  // redirige a login si no hay token de tu backend
+  // redirige a login si no hay token
   useEffect(() => {
     if (!token) navigate('/login?next=/subir', { replace: true });
   }, [token, navigate]);
@@ -66,7 +75,6 @@ export default function SubirApunte() {
   const [tagsInput, setTagsInput] = useState('');
   const tags = useMemo(() => tagsInput.split(',').map(t => t.trim()).filter(Boolean), [tagsInput]);
   const [visibilidad, setVisibilidad] = useState('public');
-  const [urlExterna, setUrlExterna] = useState('');
 
   // archivo
   const [file, setFile] = useState(null);
@@ -99,59 +107,34 @@ export default function SubirApunte() {
 
     if (!titulo.trim()) { setError('❗ El título es obligatorio.'); return; }
     if (!descripcion.trim()) { setError('❗ La descripción es obligatoria.'); return; }
-    if (!file && !urlExterna.trim()) { setError('❗ Sube un archivo o proporciona una URL externa.'); return; }
+    if (!file) { setError('❗ Sube un archivo.'); return; }
     if (!token) { setError('❗ Sesión no válida. Inicia sesión.'); return; }
 
     try {
       setSubiendo(true);
 
-      if (file) {
-        const fd = new FormData();
-        fd.append('titulo', titulo);
-        fd.append('descripcion', descripcion);
-        fd.append('autor', autor);
-        fd.append('subject_slug', subject);
-        fd.append('visibilidad', visibilidad);
-        fd.append('tags', JSON.stringify(tags));
-        fd.append('file', file);
-        if (urlExterna.trim()) fd.append('resource_url', urlExterna.trim());
+      const fd = new FormData();
+      fd.append('titulo', titulo);
+      fd.append('descripcion', descripcion);
+      fd.append('autor', autor);
+      fd.append('subject_slug', subject);
+      fd.append('visibilidad', visibilidad);
+      fd.append('tags', JSON.stringify(tags));
+      fd.append('file', file);
 
-        const { data } = await axios.post(`${API}/apuntes`, fd, {
-          headers: { Authorization: `Bearer ${token}` },
-          onUploadProgress: (evt) => {
-            if (!evt.total) return;
-            const pct = Math.round((evt.loaded / evt.total) * 100);
-            setProgreso(pct);
-          }
-        });
+      const { data } = await axios.post(`${API}/apuntes`, fd, {
+        headers: { Authorization: `Bearer ${token}` },
+        onUploadProgress: (evt) => {
+          if (!evt.total) return;
+          const pct = Math.round((evt.loaded / evt.total) * 100);
+          setProgreso(pct);
+        }
+      });
 
-        setMensaje(`✅ Apunte creado con ID ${data?.id ?? '—'}`);
-        setTitulo(''); setDescripcion(''); setTagsInput(''); setUrlExterna('');
-        setFile(null); setProgreso(0);
-        if (data?.id) setTimeout(() => navigate(`/apunte/${data.id}`), 800);
-      } else {
-        const res = await fetch(`${API}/apuntes`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            titulo,
-            descripcion,
-            autor,
-            subject_slug: subject,
-            visibilidad,
-            tags,
-            resource_url: urlExterna.trim(),
-          }),
-        });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
-        setMensaje(`✅ Apunte creado con ID ${body?.id ?? '—'}`);
-        setTitulo(''); setDescripcion(''); setTagsInput(''); setUrlExterna('');
-        if (body?.id) setTimeout(() => navigate(`/apunte/${body.id}`), 800);
-      }
+      setMensaje(`✅ Apunte creado con ID ${data?.id ?? '—'}`);
+      setTitulo(''); setDescripcion(''); setTagsInput('');
+      setFile(null); setProgreso(0);
+      if (data?.id) setTimeout(() => navigate(`/apunte/${data.id}`), 800);
     } catch (err) {
       setError(`❌ Error: ${err?.response?.data?.error || err.message || 'No se pudo subir el apunte'}`);
     } finally {
@@ -165,7 +148,7 @@ export default function SubirApunte() {
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight">📤 Subir apunte</h2>
-          <p className="text-slate-500 text-sm">Comparte PDFs, presentaciones, imágenes o enlaza recursos externos.</p>
+          <p className="text-slate-500 text-sm">Comparte PDFs, presentaciones o imágenes.</p>
         </div>
         <div className="flex items-center gap-2">
           <Link to="/perfil" className="px-3 py-2 rounded-xl border bg-white hover:bg-slate-50">Mis apuntes</Link>
@@ -182,14 +165,22 @@ export default function SubirApunte() {
         <div className="grid sm:grid-cols-2 gap-4">
           <div>
             <label className="block mb-1 text-sm font-medium text-slate-700">Materia</label>
-            <select value={subject} onChange={(e) => setSubject(e.target.value)} className="w-full border rounded-lg px-3 py-2 bg-white">
+            <select
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 bg-white"
+            >
               {SUBJECTS.map(s => (<option key={s.slug} value={s.slug}>{s.nombre}</option>))}
             </select>
             <p className="text-xs text-slate-500 mt-1">Se usará para clasificar y recomendar el apunte.</p>
           </div>
           <div>
             <label className="block mb-1 text-sm font-medium text-slate-700">Visibilidad</label>
-            <select value={visibilidad} onChange={(e) => setVisibilidad(e.target.value)} className="w-full border rounded-lg px-3 py-2 bg-white">
+            <select
+              value={visibilidad}
+              onChange={(e) => setVisibilidad(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 bg-white"
+            >
               <option value="public">Público</option>
               <option value="private">Privado</option>
             </select>
@@ -200,20 +191,38 @@ export default function SubirApunte() {
         {/* Título */}
         <div>
           <label className="block mb-1 text-sm font-medium text-slate-700">Título *</label>
-          <input type="text" value={titulo} onChange={(e) => setTitulo(e.target.value)} className="w-full border rounded-lg px-3 py-2" placeholder="Ej. ED1 - Árboles y Grafos (resumen)" />
+          <input
+            type="text"
+            value={titulo}
+            onChange={(e) => setTitulo(e.target.value)}
+            className="w-full border rounded-lg px-3 py-2"
+            placeholder="Ej. ED1 - Árboles y Grafos (resumen)"
+          />
         </div>
 
         {/* Descripción */}
         <div>
           <label className="block mb-1 text-sm font-medium text-slate-700">Descripción *</label>
-          <textarea value={descripcion} onChange={(e) => setDescripcion(e.target.value)} className="w-full border rounded-lg px-3 py-2" rows={4} placeholder="Resumen con conceptos clave, ejemplos y ejercicios…" />
+          <textarea
+            value={descripcion}
+            onChange={(e) => setDescripcion(e.target.value)}
+            className="w-full border rounded-lg px-3 py-2"
+            rows={4}
+            placeholder="Resumen con conceptos clave, ejemplos y ejercicios…"
+          />
           <p className="text-xs text-slate-500 mt-1">Sé descriptivo: ayuda a otros a encontrar tu recurso.</p>
         </div>
 
         {/* Tags */}
         <div>
           <label className="block mb-1 text-sm font-medium text-slate-700">Etiquetas</label>
-          <input type="text" value={tagsInput} onChange={(e) => setTagsInput(e.target.value)} className="w-full border rounded-lg px-3 py-2" placeholder="separa, con, comas (ej. listas, pilas, colas)" />
+          <input
+            type="text"
+            value={tagsInput}
+            onChange={(e) => setTagsInput(e.target.value)}
+            className="w-full border rounded-lg px-3 py-2"
+            placeholder="separa, con, comas (ej. listas, pilas, colas)"
+          />
           {!!tags.length && (
             <div className="flex flex-wrap gap-2 mt-2">
               {tags.map((t, i) => (
@@ -223,25 +232,33 @@ export default function SubirApunte() {
           )}
         </div>
 
-        {/* URL externa */}
-        <div>
-          <label className="block mb-1 text-sm font-medium text-slate-700">URL externa (opcional)</label>
-          <input type="url" value={urlExterna} onChange={(e) => setUrlExterna(e.target.value)} className="w-full border rounded-lg px-3 py-2" placeholder="https://drive.google.com/… o https://…/mi-apunte.pdf" />
-          <p className="text-xs text-slate-500 mt-1">Puedes pegar un enlace si no deseas subir el archivo.</p>
-        </div>
-
         {/* Subida de archivo */}
         <div className="grid md:grid-cols-[1fr_220px] gap-4 items-stretch">
           <div
             onDrop={onDrop} onDragOver={onDragOver} onDragLeave={onDragLeave}
-            className={cx('rounded-2xl border-2 border-dashed p-6 text-center transition', dragOver ? 'border-indigo-500 bg-indigo-50' : 'border-slate-300')}
+            className={cx(
+              'rounded-2xl border-2 border-dashed p-6 text-center transition',
+              dragOver ? 'border-indigo-500 bg-indigo-50' : 'border-slate-300'
+            )}
           >
             <div className="text-4xl mb-2">📎</div>
             <p className="font-medium">Arrastra tu archivo aquí</p>
             <p className="text-sm text-slate-500">o</p>
             <div className="mt-3">
-              <button type="button" onClick={() => fileRef.current?.click()} className="px-4 py-2 rounded-xl border bg-white hover:bg-slate-50">Elegir archivo</button>
-              <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.txt" className="hidden" onChange={(e) => onPickFile(e.target.files?.[0])} />
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                className="px-4 py-2 rounded-xl border bg-white hover:bg-slate-50"
+              >
+                Elegir archivo
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.txt"
+                className="hidden"
+                onChange={(e) => onPickFile(e.target.files?.[0])}
+              />
             </div>
 
             {file ? (
@@ -255,13 +272,19 @@ export default function SubirApunte() {
                 </div>
                 {subiendo && <div className="text-xs text-slate-600 mt-1">Subiendo… {progreso}%</div>}
                 {!subiendo && (
-                  <button type="button" className="mt-2 text-rose-600 text-sm hover:underline" onClick={() => { setFile(null); setProgreso(0); }}>
+                  <button
+                    type="button"
+                    className="mt-2 text-rose-600 text-sm hover:underline"
+                    onClick={() => { setFile(null); setProgreso(0); }}
+                  >
                     Quitar archivo
                   </button>
                 )}
               </div>
             ) : (
-              <p className="text-xs text-slate-500 mt-3">Formatos aceptados: PDF, DOC/DOCX, PPT/PPTX, PNG, JPG, TXT. Límite {MAX_MB} MB.</p>
+              <p className="text-xs text-slate-500 mt-3">
+                Formatos aceptados: PDF, DOC/DOCX, PPT/PPTX, PNG, JPG, TXT. Límite {MAX_MB} MB.
+              </p>
             )}
           </div>
 
@@ -271,14 +294,20 @@ export default function SubirApunte() {
               <li>Prefiere PDF para mayor compatibilidad.</li>
               <li>Describe el contenido y agrega etiquetas.</li>
               <li>Si es tuyo, incluye portada o nombre.</li>
-              <li>También puedes compartir solo el enlace.</li>
             </ul>
           </div>
         </div>
 
         {/* Acciones */}
         <div className="flex flex-wrap items-center gap-3">
-          <button type="submit" disabled={subiendo} className={cx('px-5 py-2 rounded-xl text-white font-semibold shadow-sm', subiendo ? 'bg-indigo-400' : 'bg-indigo-600 hover:bg-indigo-700')}>
+          <button
+            type="submit"
+            disabled={subiendo}
+            className={cx(
+              'px-5 py-2 rounded-xl text-white font-semibold shadow-sm',
+              subiendo ? 'bg-indigo-400' : 'bg-indigo-600 hover:bg-indigo-700'
+            )}
+          >
             {subiendo ? 'Subiendo…' : 'Subir apunte'}
           </button>
           <Link to="/perfil" className="px-4 py-2 rounded-xl border bg-white hover:bg-slate-50">Cancelar</Link>
@@ -286,7 +315,7 @@ export default function SubirApunte() {
       </form>
 
       <div className="text-xs text-slate-500">
-        Nota: el archivo se envía como <code>multipart/form-data</code> a <code>{API}/apuntes</code> con tu token JWT (<code>Authorization: Bearer …</code>). El backend sube a Supabase con <em>service_role</em>.
+        Nota: el archivo se envía como <code>multipart/form-data</code> a <code>{API}/apuntes</code> con tu token JWT (<code>Authorization: Bearer …</code>).
       </div>
     </div>
   );

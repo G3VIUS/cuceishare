@@ -1,18 +1,23 @@
 // src/pages/Login.jsx
 import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 
-// CRA: lee REACT_APP_API_URL; si no existe, usa localhost:3001
-const API = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+const API =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) ||
+  process.env.REACT_APP_API_URL ||
+  'http://localhost:3001';
 
 export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [showPwd, setShowPwd] = useState(false);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [showPwd, setShowPwd]   = useState(false);
+  const [error, setError]       = useState('');
+  const [loading, setLoading]   = useState(false);
+
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const nextParam = searchParams.get('next') || '';
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -21,15 +26,30 @@ export default function Login() {
 
     try {
       const { data } = await axios.post(`${API}/auth/login`, { username, password });
+
+      const roleRaw = data?.user?.role ?? '';
+      const role    = String(roleRaw).toLowerCase();
+
       localStorage.setItem('token', data.token);
       localStorage.setItem('usuario', JSON.stringify({
         id: data.user.id,
         username: data.user.username,
-        tipo: data.user.role, // 'admin' | 'profesor' | 'estudiante'
+        tipo: roleRaw,              // guardo el rol tal cual viene
       }));
-      navigate('/');
+
+      // Debug rápido (si necesitas ver qué llega):
+      // console.log('ROLE FROM API:', roleRaw);
+
+      const isLocalPath = nextParam && nextParam.startsWith('/');
+
+      if (isLocalPath) {
+        navigate(nextParam, { replace: true });
+      } else if (role.includes('admin')) {
+        navigate('/admin', { replace: true });
+      } else {
+        navigate('/', { replace: true });
+      }
     } catch (err) {
-      console.log('LOGIN error:', err?.response?.status, err?.response?.data);
       const msg = err?.response?.data?.error || `Error ${err?.response?.status || ''} iniciando sesión`;
       setError(msg);
     } finally {
@@ -50,8 +70,9 @@ export default function Login() {
 
       <form onSubmit={handleLogin} className="space-y-4">
         <div>
-          <label className="block mb-1 font-semibold">Usuario</label>
+          <label className="block mb-1 font-semibold" htmlFor="user">Usuario</label>
           <input
+            id="user"
             type="text"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
@@ -63,9 +84,10 @@ export default function Login() {
         </div>
 
         <div>
-          <label className="block mb-1 font-semibold">Contraseña</label>
+          <label className="block mb-1 font-semibold" htmlFor="pwd">Contraseña</label>
           <div className="flex">
             <input
+              id="pwd"
               type={showPwd ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -78,7 +100,8 @@ export default function Login() {
               type="button"
               onClick={() => setShowPwd(v => !v)}
               className="px-3 border border-l-0 border-gray-300 rounded-r-md text-sm text-gray-600"
-              aria-label="Mostrar/Ocultar contraseña"
+              aria-label={showPwd ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+              title={showPwd ? 'Ocultar contraseña' : 'Mostrar contraseña'}
             >
               {showPwd ? '🙈' : '👁️'}
             </button>

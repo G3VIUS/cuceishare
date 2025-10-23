@@ -78,6 +78,10 @@ export default function Perfil() {
   const username = sesion?.username || sesion?.user || `user-${sesion?.id ?? ''}`;
   const role = sesion?.tipo || sesion?.role || 'estudiante';
 
+  // Campos estables para deps
+  const sesionId = sesion?.id ?? null;
+  const sesionUsername = sesion?.username || role || username;
+
   // Headers
   const headers = useMemo(() => {
     const h = { 'Content-Type': 'application/json' };
@@ -109,17 +113,22 @@ export default function Perfil() {
     if (!token) navigate('/login', { replace: true });
   }, [token, navigate]);
 
-  // Cargar perfil + apuntes
+  // Cargar perfil + apuntes (sin 'API' en deps: constante de módulo)
   useEffect(() => {
     if (!token) return;
+
+    const acProfile = new AbortController();
+    const acNotes = new AbortController();
+    let alive = true;
 
     // Perfil
     (async () => {
       setProfileLoading(true);
       try {
-        const r = await fetch(`${API}/auth/me`, { headers });
+        const r = await fetch(`${API}/auth/me`, { headers, signal: acProfile.signal });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+        if (!alive) return;
         const p = j?.perfil || {};
         setForm(f => ({
           ...f,
@@ -133,9 +142,9 @@ export default function Perfil() {
           avatar_url: p.avatar_url || ''
         }));
       } catch (e) {
-        console.warn('[perfil] load:', e?.message);
+        if (e.name !== 'AbortError') console.warn('[perfil] load:', e?.message);
       } finally {
-        setProfileLoading(false);
+        if (alive) setProfileLoading(false);
       }
     })();
 
@@ -143,25 +152,33 @@ export default function Perfil() {
     (async () => {
       setApLoading(true);
       try {
-        const res = await fetch(`${API}/apuntes`, { headers });
+        const res = await fetch(`${API}/apuntes`, { headers, signal: acNotes.signal });
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
+        if (!alive) return;
         const arr = Array.isArray(json) ? json :
           (Array.isArray(json.apuntes) ? json.apuntes : (json.items || []));
         const propios = role === 'admin' ? arr : arr.filter(a =>
-          a.autor === (sesion?.username || role || username) ||
-          a.user === (sesion?.username || role || username) ||
-          a.usuario === (sesion?.username || role || username) ||
-          a.usuario_id === sesion?.id
+          a.autor === sesionUsername ||
+          a.user === sesionUsername ||
+          a.usuario === sesionUsername ||
+          a.usuario_id === sesionId
         );
         setApuntes(propios);
       } catch (e) {
+        if (e.name === 'AbortError') return;
         setApError(e.message || 'No se pudieron cargar los apuntes');
       } finally {
-        setApLoading(false);
+        if (alive) setApLoading(false);
       }
     })();
-  }, [API, headers, role, sesion, token, username]);
+
+    return () => {
+      alive = false;
+      acProfile.abort();
+      acNotes.abort();
+    };
+  }, [headers, role, sesionId, sesionUsername, token]);
 
   /* -------- Perfil: validación & progreso -------- */
   const requiredOk = (v) => String(v || '').trim().length > 0;
@@ -212,7 +229,7 @@ export default function Perfil() {
     const file = ev.target.files?.[0];
     if (!file) return;
     const url = URL.createObjectURL(file);
-    // Nota: no subimos archivo (no hay endpoint). Deja preview y copia a avatar_url
+    // Nota: no subimos archivo (no hay endpoint). Solo preview y asignación al campo:
     setForm(prev => ({ ...prev, avatar_url: url }));
   }
 

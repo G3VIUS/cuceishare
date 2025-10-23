@@ -63,19 +63,25 @@ export default function EditApunte() {
   // cargar apunte
   useEffect(() => {
     let alive = true;
+    const ac = new AbortController();
+
     (async () => {
       setLoading(true);
       setError("");
       try {
-        const r = await fetch(`${API}/apuntes/${id}`, { headers: authHeader });
+        const r = await fetch(`${API}/apuntes/${id}`, {
+          headers: authHeader,
+          signal: ac.signal,
+        });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
 
         if (!alive) return;
+
         const tagsArray = Array.isArray(j.tags)
           ? j.tags
           : typeof j.tags === "string"
-          ? j.tags.split(",").map(s => s.trim()).filter(Boolean)
+          ? j.tags.split(",").map((s) => s.trim()).filter(Boolean)
           : [];
 
         setForm({
@@ -87,17 +93,25 @@ export default function EditApunte() {
           visibilidad: j.visibilidad ?? "public",
         });
       } catch (e) {
+        if (e.name === "AbortError") return;
         setError(e.message || "No se pudo cargar el apunte");
       } finally {
-        setLoading(false);
+        if (alive) setLoading(false);
       }
     })();
-    return () => { alive = false; };
-  }, [API, authHeader, id]);
+
+    return () => {
+      alive = false;
+      ac.abort();
+    };
+    // ❗ No incluyas API en deps: es constante de módulo y causa warning de ESLint
+  }, [authHeader, id]);
 
   function onChange(e) {
     const { name, value } = e.target;
-    setForm(prev => ({ ...prev, [name]: value }));
+    setForm((prev) => ({ ...prev, [name]: value }));
+    if (error) setError("");
+    if (saved) setSaved("");
   }
 
   // === Drag & Drop ===
@@ -110,7 +124,9 @@ export default function EditApunte() {
     const f = e.dataTransfer.files?.[0];
     if (f) validateAndSetFile(f);
   }
-  function onDragOver(e) { e.preventDefault(); }
+  function onDragOver(e) {
+    e.preventDefault();
+  }
 
   function validateAndSetFile(f) {
     if (!ACCEPTED.includes(f.type)) {
@@ -127,16 +143,20 @@ export default function EditApunte() {
 
   async function onSave(e) {
     e?.preventDefault?.();
-    setError(""); setSaved("");
+    setError("");
+    setSaved("");
 
-    if (!form.titulo.trim()) { setError("El título es requerido"); return; }
+    if (!form.titulo.trim()) {
+      setError("El título es requerido");
+      return;
+    }
 
     try {
       setSaving(true);
 
       // Prepara tags como array (jsonb)
       const tags = form.tagsCsv
-        ? form.tagsCsv.split(",").map(s => s.trim()).filter(Boolean)
+        ? form.tagsCsv.split(",").map((s) => s.trim()).filter(Boolean)
         : [];
 
       // Si hay archivo -> usar FormData y PUT multipart
@@ -151,7 +171,7 @@ export default function EditApunte() {
         if (form.subject_slug) fd.append("subject_slug", form.subject_slug);
         fd.append("visibilidad", form.visibilidad || "public");
         fd.append("tags", JSON.stringify(tags));
-        // Si mandas archivo nuevo, el backend anula resource_url
+        // Si mandas archivo nuevo, el backend suele anular resource_url
 
         r = await fetch(`${API}/apuntes/${id}`, {
           method: "PUT",
@@ -177,9 +197,9 @@ export default function EditApunte() {
       j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
 
+      setSaved("Guardado correctamente");
       // ✅ Navega al perfil al guardar
       navigate("/perfil", { replace: true });
-
     } catch (e) {
       setError(e.message || "No se pudo guardar");
     } finally {
@@ -188,7 +208,12 @@ export default function EditApunte() {
   }
 
   async function onDelete() {
-    if (!window.confirm("¿Eliminar este apunte? Esta acción no se puede deshacer.")) return;
+    if (
+      !window.confirm(
+        "¿Eliminar este apunte? Esta acción no se puede deshacer."
+      )
+    )
+      return;
     try {
       setDeleting(true);
       const r = await fetch(`${API}/apuntes/${id}`, {
@@ -214,12 +239,21 @@ export default function EditApunte() {
       </h1>
 
       {(error || saved) && (
-        <div className={`p-3 rounded-xl border ${error ? "bg-rose-50 text-rose-800" : "bg-emerald-50 text-emerald-800"}`}>
+        <div
+          className={`p-3 rounded-xl border ${
+            error
+              ? "bg-rose-50 text-rose-800"
+              : "bg-emerald-50 text-emerald-800"
+          }`}
+        >
           {error || saved}
         </div>
       )}
 
-      <form onSubmit={onSave} className="grid gap-4 bg-white p-5 rounded-2xl border shadow-sm">
+      <form
+        onSubmit={onSave}
+        className="grid gap-4 bg-white p-5 rounded-2xl border shadow-sm"
+      >
         {/* Campos principales */}
         <div className="space-y-1">
           <label className="text-sm font-medium">Título *</label>
@@ -255,7 +289,11 @@ export default function EditApunte() {
               className="w-full px-3 py-2 rounded-lg border bg-white"
             >
               <option value="">— Selecciona —</option>
-              {materiasOpc.map(m => <option key={m} value={m}>{m}</option>)}
+              {materiasOpc.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -274,7 +312,9 @@ export default function EditApunte() {
         </div>
 
         <div className="space-y-1">
-          <label className="text-sm font-medium">Etiquetas (separadas por coma)</label>
+          <label className="text-sm font-medium">
+            Etiquetas (separadas por coma)
+          </label>
           <input
             name="tagsCsv"
             value={form.tagsCsv}
@@ -285,7 +325,9 @@ export default function EditApunte() {
         </div>
 
         <div className="space-y-1">
-          <label className="text-sm font-medium">URL del recurso (PDF/Drive/GitHub)</label>
+          <label className="text-sm font-medium">
+            URL del recurso (PDF/Drive/GitHub)
+          </label>
           <input
             name="resource_url"
             value={form.resource_url}
@@ -298,7 +340,8 @@ export default function EditApunte() {
             <a
               className="text-sm text-indigo-700 underline"
               href={form.resource_url}
-              target="_blank" rel="noreferrer"
+              target="_blank"
+              rel="noreferrer"
             >
               Abrir recurso
             </a>
@@ -330,14 +373,17 @@ export default function EditApunte() {
               className="hidden"
             />
             <div className="mt-3 text-xs text-slate-500">
-              Formatos aceptados: PDF, DOC/DOCX, PPT/PPTX, PNG, JPG, TXT. Límite 25 MB.
+              Formatos aceptados: PDF, DOC/DOCX, PPT/PPTX, PNG, JPG, TXT.
+              Límite 25 MB.
             </div>
 
             {file && (
               <div className="mt-3 p-3 rounded-xl bg-slate-50 border text-left text-sm">
                 <div className="font-medium">Seleccionado:</div>
                 <div className="truncate">{file.name}</div>
-                <div className="text-slate-500">{(file.size / (1024*1024)).toFixed(2)} MB</div>
+                <div className="text-slate-500">
+                  {(file.size / (1024 * 1024)).toFixed(2)} MB
+                </div>
                 <button
                   type="button"
                   onClick={() => setFile(null)}
@@ -364,7 +410,9 @@ export default function EditApunte() {
           <button
             type="submit"
             disabled={saving}
-            className={`px-4 py-2 rounded-xl text-white font-semibold ${saving ? "bg-green-400" : "bg-green-600 hover:bg-green-700"}`}
+            className={`px-4 py-2 rounded-xl text-white font-semibold ${
+              saving ? "bg-green-400" : "bg-green-600 hover:bg-green-700"
+            }`}
           >
             {saving ? "Guardando…" : "Guardar cambios"}
           </button>
@@ -379,7 +427,9 @@ export default function EditApunte() {
             type="button"
             disabled={deleting}
             onClick={onDelete}
-            className={`px-4 py-2 rounded-xl ${deleting ? "bg-rose-300" : "bg-rose-600 hover:bg-rose-700"} text-white`}
+            className={`px-4 py-2 rounded-xl ${
+              deleting ? "bg-rose-300" : "bg-rose-600 hover:bg-rose-700"
+            } text-white`}
           >
             {deleting ? "Eliminando…" : "Eliminar"}
           </button>
