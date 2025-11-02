@@ -1,20 +1,20 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 
-/* ===== Config API ===== */
 const API =
   (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) ||
   process.env.REACT_APP_API_URL ||
   'http://localhost:3001';
 
-/* ===== UI helpers ===== */
 const cx = (...xs) => xs.filter(Boolean).join(' ');
+
+/* UI */
 const Btn = ({ className = '', ...p }) => (
   <button
     {...p}
     className={cx(
-      'inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-medium transition shadow-sm',
-      'bg-white hover:bg-slate-50 border',
+      'inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-base border shadow-sm',
+      'bg-white hover:bg-slate-50',
       className
     )}
   />
@@ -23,39 +23,54 @@ const BtnPrimary = ({ className = '', ...p }) => (
   <button
     {...p}
     className={cx(
-      'inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-2 text-sm font-semibold transition shadow',
-      'bg-indigo-600 hover:bg-indigo-700 text-white',
+      'inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-base font-semibold text-white shadow-sm',
+      'bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60',
       className
     )}
   />
 );
-const PillLink = ({ to, active, children }) => (
-  <Link
-    to={to}
+const Input = (p) => (
+  <input
+    {...p}
     className={cx(
-      'rounded-2xl px-4 py-2 text-sm font-semibold shadow-sm border',
-      active ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white hover:bg-slate-50'
+      'w-full px-3 py-2 rounded-2xl border bg-white text-base',
+      'focus:outline-none focus:ring-2 focus:ring-indigo-300',
+      p.className
     )}
-  >
-    {children}
-  </Link>
+  />
+);
+const Select = (p) => (
+  <select
+    {...p}
+    className={cx(
+      'w-full px-3 py-2 rounded-2xl border bg-white text-base',
+      'focus:outline-none focus:ring-2 focus:ring-indigo-300',
+      p.className
+    )}
+  />
 );
 
 export default function AdminApuntes() {
-  const navigate = useNavigate();
-
-  // sesión/role (NO hooks condicionales)
+  // --- sesión/rol (NO retornar antes de los hooks)
   const token = localStorage.getItem('token') || '';
-  let role = '';
-  try { role = JSON.parse(localStorage.getItem('usuario'))?.tipo || ''; } catch {}
-  const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
-  const notAdmin = !token || String(role).toLowerCase() !== 'admin';
+  const user = useMemo(() => {
+    try { return JSON.parse(localStorage.getItem('usuario')); } catch { return null; }
+  }, []);
+  const role = (user?.tipo || user?.role || '').toLowerCase();
 
-  // listado estado
+  // headers estables
+  const headers = useMemo(
+    () => ({ Authorization: `Bearer ${token}` }),
+    [token]
+  );
+
+  // estado/filtros
   const [q, setQ] = useState('');
-  const [order, setOrder] = useState('recientes'); // recientes | antiguos | titulo
+  const [order, setOrder] = useState('recientes');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+
+  // datos
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -65,9 +80,10 @@ export default function AdminApuntes() {
     setLoading(true); setErr('');
     try {
       const params = new URLSearchParams({
-        q, order,
+        q: q || '',
         page: String(page),
         pageSize: String(pageSize),
+        order: order || 'recientes',
       });
       const r = await fetch(`${API}/admin/apuntes?${params.toString()}`, { headers });
       const j = await r.json().catch(() => ({}));
@@ -76,99 +92,102 @@ export default function AdminApuntes() {
       setTotal(j.total || 0);
     } catch (e) {
       setErr(e.message || 'No se pudo cargar');
-      setRows([]); setTotal(0);
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   }, [q, order, page, pageSize, headers]);
 
   useEffect(() => { load(); }, [load]);
 
   const borrar = async (id) => {
     if (!window.confirm('¿Eliminar este apunte definitivamente?')) return;
-    const r = await fetch(`${API}/admin/apuntes/${id}`, { method: 'DELETE', headers });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) return alert(j?.error || `HTTP ${r.status}`);
-    await load();
+    try {
+      const r = await fetch(`${API}/admin/apuntes/${id}`, {
+        method: 'DELETE',
+        headers,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
   };
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  return (
-    <div className="max-w-7xl mx-auto px-4 md:px-6 py-4 space-y-5">
-      {/* Header y tabs grandes */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">
-            ⚙️ Admin · Apuntes
-          </h1>
-          <p className="text-slate-500 text-sm">Revisa, edita y elimina apuntes.</p>
+  // --- render (guardia después de hooks)
+  if (!token || role !== 'admin') {
+    return (
+      <div className="max-w-6xl mx-auto p-6">
+        <div className="rounded-2xl border bg-amber-50 text-amber-800 px-4 py-3 text-base">
+          Debes iniciar sesión como <b>admin</b> para ver esta página.
         </div>
-        <div className="flex gap-2">
-          <PillLink to="/admin/apuntes" active>📄 Admin Apuntes</PillLink>
-          <PillLink to="/admin/contenido" active={false}>📚 Admin Contenido</PillLink>
-          <Btn onClick={() => navigate('/')}>Volver</Btn>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-7xl mx-auto p-4 md:p-6 space-y-5">
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-extrabold tracking-tight">⚙️ Admin · Apuntes</h1>
+        <div className="flex gap-3">
+          <Link to="/admin/contenido">
+            <Btn className="text-indigo-700 border-indigo-200">Ir a Contenido</Btn>
+          </Link>
+          <Link to="/">
+            <Btn>Volver</Btn>
+          </Link>
         </div>
       </div>
 
-      {notAdmin && (
-        <div className="rounded-xl border bg-amber-50 text-amber-800 p-4">
-          Debes iniciar sesión como <b>admin</b> para ver este panel.
-        </div>
-      )}
-
-      {/* Filtros */}
-      <div className="flex flex-wrap items-center gap-2">
-        <input
+      <div className="flex flex-wrap items-center gap-3">
+        <Input
+          placeholder="Buscar por título/autor/descr…"
           value={q}
           onChange={(e)=>{ setQ(e.target.value); setPage(1); }}
-          placeholder="Buscar título, autor o descripción…"
-          className="px-3 py-2 rounded-2xl border bg-white w-72"
+          style={{ maxWidth: 360 }}
         />
-        <select
-          value={order}
-          onChange={(e)=>{ setOrder(e.target.value); setPage(1); }}
-          className="px-3 py-2 rounded-2xl border bg-white"
-        >
+        <Select value={order} onChange={(e)=>{ setOrder(e.target.value); setPage(1); }} style={{ width: 220 }}>
           <option value="recientes">Más recientes</option>
           <option value="antiguos">Más antiguos</option>
           <option value="titulo">Por título (A→Z)</option>
-        </select>
-        <Btn onClick={load}>Buscar</Btn>
-        <span className="text-xs text-slate-500 ml-auto">Total: {total}</span>
+        </Select>
+        <BtnPrimary onClick={load}>Buscar</BtnPrimary>
+        <span className="ml-auto text-sm text-slate-500">Total: {total}</span>
       </div>
 
-      {/* Tabla */}
-      <div className="rounded-2xl border bg-white overflow-x-auto shadow-sm">
-        <table className="min-w-[860px] w-full text-sm">
+      {err && <div className="rounded-2xl border bg-rose-50 text-rose-800 px-4 py-3">{err}</div>}
+
+      <div className="rounded-2xl border overflow-x-auto bg-white">
+        <table className="min-w-[940px] w-full text-sm">
           <thead className="bg-slate-50 text-slate-600">
             <tr>
-              <th className="text-left px-3 py-2 w-16">ID</th>
-              <th className="text-left px-3 py-2">Título</th>
-              <th className="text-left px-3 py-2">Autor</th>
-              <th className="text-left px-3 py-2">Materia</th>
-              <th className="text-left px-3 py-2">Visib.</th>
-              <th className="text-right px-3 py-2 w-40">Acciones</th>
+              <th className="px-3 py-2 text-left w-[64px]">ID</th>
+              <th className="px-3 py-2 text-left">Título</th>
+              <th className="px-3 py-2 text-left">Autor</th>
+              <th className="px-3 py-2 text-left">Materia</th>
+              <th className="px-3 py-2 text-left">Visibilidad</th>
+              <th className="px-3 py-2 text-right w-[220px]">Acciones</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td className="px-3 py-3 text-slate-500" colSpan={6}>Cargando…</td></tr>
-            ) : err ? (
-              <tr><td className="px-3 py-3 text-rose-700" colSpan={6}>⚠️ {err}</td></tr>
+              <tr><td className="p-4 text-slate-500" colSpan={6}>Cargando…</td></tr>
             ) : rows.length === 0 ? (
-              <tr><td className="px-3 py-3 text-slate-500" colSpan={6}>Sin resultados</td></tr>
+              <tr><td className="p-4 text-slate-500" colSpan={6}>Sin resultados</td></tr>
             ) : rows.map(a => (
               <tr key={a.id} className="border-t">
                 <td className="px-3 py-2 text-slate-500">{a.id}</td>
                 <td className="px-3 py-2">{a.titulo}</td>
                 <td className="px-3 py-2">{a.autor}</td>
-                <td className="px-3 py-2">{a.subject_slug || a.materia || ''}</td>
+                <td className="px-3 py-2">{a.subject_slug || a.materia || '—'}</td>
                 <td className="px-3 py-2">{a.visibilidad || 'public'}</td>
-                <td className="px-3 py-2 text-right">
-                  <div className="inline-flex gap-2">
-                    <Link to={`/apunte/${a.id}/editar`} className="px-3 py-1 rounded border bg-white hover:bg-slate-50">
-                      Editar
-                    </Link>
-                    <button onClick={()=>borrar(a.id)} className="px-3 py-1 rounded bg-rose-600 text-white hover:bg-rose-700">
+                <td className="px-3 py-2">
+                  <div className="flex justify-end gap-2">
+                    <Link to={`/apunte/${a.id}`} className="px-3 py-1.5 rounded-xl border hover:bg-slate-50">Ver</Link>
+                    <Link to={`/apunte/${a.id}/editar`} className="px-3 py-1.5 rounded-xl border hover:bg-slate-50">Editar</Link>
+                    <button onClick={() => borrar(a.id)} className="px-3 py-1.5 rounded-xl bg-rose-600 text-white hover:bg-rose-700">
                       Borrar
                     </button>
                   </div>
@@ -179,22 +198,18 @@ export default function AdminApuntes() {
         </table>
       </div>
 
-      {/* Paginación */}
+      {/* paginación */}
       <div className="flex items-center justify-between text-sm">
-        <div className="px-3 py-1 rounded-full bg-slate-50 border">
+        <div className="px-3 py-1.5 rounded-full bg-slate-50 border">
           Página {page} / {totalPages} · Registros {total}
         </div>
         <div className="flex items-center gap-2">
           <label>Por página:</label>
-          <select
-            value={pageSize}
-            onChange={(e)=>{ setPageSize(Number(e.target.value)); setPage(1); }}
-            className="px-3 py-1.5 rounded-xl border bg-white"
-          >
-            {[10, 20, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
-          <Btn onClick={()=>setPage(p=>Math.max(1, p-1))} disabled={page<=1}>‹ Anterior</Btn>
-          <Btn onClick={()=>setPage(p=>Math.min(totalPages, p+1))} disabled={page>=totalPages}>Siguiente ›</Btn>
+          <Select value={pageSize} onChange={(e)=>{ setPageSize(Number(e.target.value)); setPage(1); }} style={{ width: 110 }}>
+            {[10,20,50,100].map(n => <option key={n} value={n}>{n}</option>)}
+          </Select>
+          <Btn onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page<=1}>‹ Anterior</Btn>
+          <Btn onClick={()=>setPage(p=>p+1)} disabled={(page*pageSize)>=total}>Siguiente ›</Btn>
         </div>
       </div>
     </div>

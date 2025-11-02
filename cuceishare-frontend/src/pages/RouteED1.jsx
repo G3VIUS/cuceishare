@@ -21,6 +21,7 @@ function Stat({ label, value, sub }) {
 }
 
 const TIPO_LABEL = {
+  apunte: 'Apunte',
   pdf: 'PDF',
   libro: 'Libro',
   web: 'Artículo/Guía',
@@ -28,13 +29,14 @@ const TIPO_LABEL = {
   documento: 'Documento',
 };
 const TIPO_ICON = {
+  apunte: '🗒️',
   pdf: '📄',
   libro: '📚',
   web: '🧭',
   repo: '📦',
   documento: '📝',
 };
-const TIPO_ORDER = ['pdf', 'libro', 'web', 'repo', 'documento'];
+const TIPO_ORDER = ['apunte', 'pdf', 'libro', 'web', 'repo', 'documento'];
 
 export default function RouteED1() {
   const navigate = useNavigate();
@@ -60,6 +62,11 @@ export default function RouteED1() {
   const [resLoading, setResLoading] = useState(false);
   const [resErr, setResErr] = useState('');
   const [resources, setResources] = useState([]); // excluye videos en backend
+
+  // Apuntes relacionados (plataforma)
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [notesErr, setNotesErr] = useState('');
+  const [relatedNotes, setRelatedNotes] = useState([]); // [{id,titulo,autor,url,created_at}...]
 
   // Redirección si no hay sesión
   useEffect(() => {
@@ -99,33 +106,73 @@ export default function RouteED1() {
     return () => { alive = false; };
   }, [isAuthed, token, navigate]);
 
-  // Abrir slide-over de recursos
+  // Abrir slide-over de recursos + apuntes (versión que te funcionaba)
   useEffect(() => {
     let alive = true;
     if (!openBlock) return;
+
     (async () => {
       setResLoading(true); setResErr(''); setResources([]);
+      setNotesLoading(true); setNotesErr(''); setRelatedNotes([]);
+
       try {
         const headers = { Authorization: `Bearer ${token}` };
-        const { data } = await axios.get(`${API}/api/ed1/route/resources`, {
+
+        // 1) Recursos curatoriales por blockId
+        const recReq = axios.get(`${API}/api/ed1/route/resources`, {
           headers,
           params: { blockId: openBlock, _t: Date.now() },
         });
+
+        // 2) Apuntes relacionados (mismo esquema que usabas)
+        const notesReq = axios.get(`${API}/apuntes`, {
+          headers,
+          params: { blockId: openBlock, materia: 'ed1', q: openBlockTitle, _t: Date.now() },
+        });
+
+        const [recRes, notesRes] = await Promise.allSettled([recReq, notesReq]);
         if (!alive) return;
-        setResources(Array.isArray(data?.items) ? data.items : []);
-      } catch (e) {
-        if (!alive) return;
-        setResErr(e?.response?.data?.error || 'No se pudieron cargar los recursos');
+
+        // Recursos
+        if (recRes.status === 'fulfilled') {
+          const arr = Array.isArray(recRes.value?.data?.items)
+            ? recRes.value.data.items
+            : Array.isArray(recRes.value?.data)
+              ? recRes.value.data
+              : [];
+          setResources(arr);
+        } else {
+          setResErr(recRes.reason?.response?.data?.error || 'No se pudieron cargar los recursos');
+        }
+
+        // Apuntes
+        if (notesRes.status === 'fulfilled') {
+          const raw = notesRes.value?.data;
+          const list = Array.isArray(raw?.items) ? raw.items
+                    : Array.isArray(raw?.rows)  ? raw.rows
+                    : Array.isArray(raw)        ? raw
+                    : [];
+          const normalized = list.map(n => ({
+            id: n.id ?? n.apunte_id ?? n.slug ?? String(Math.random()).slice(2),
+            titulo: n.titulo ?? n.title ?? 'Apunte',
+            autor: n.autor ?? n.autor_nombre ?? n.user_name ?? n.owner ?? null,
+            url: n.url ?? n.file_url ?? n.link ?? null,
+            created_at: n.created_at ?? n.fecha ?? null,
+          }));
+          setRelatedNotes(normalized);
+        } else {
+          setNotesErr(notesRes.reason?.response?.data?.error || 'No se pudieron cargar los apuntes');
+        }
       } finally {
-        if (alive) setResLoading(false);
+        if (alive) { setResLoading(false); setNotesLoading(false); }
       }
     })();
+
     return () => { alive = false; };
-  }, [openBlock, token]);
+  }, [openBlock, openBlockTitle, token]);
 
   // Derivados
   const incorrect = Math.max(0, (totals.total || 0) - (totals.correct || 0));
-  const hasResults = (totals.total || 0) > 0;
 
   // Agrupar recursos por tipo y ordenar
   const groupedResources = useMemo(() => {
@@ -134,7 +181,6 @@ export default function RouteED1() {
       const t = r.tipo || 'documento';
       (g[t] ||= []).push(r);
     }
-    // ordenar cada grupo por rank y título
     for (const k of Object.keys(g)) {
       g[k].sort((a, b) => (a.rank ?? 999) - (b.rank ?? 999) || String(a.title).localeCompare(String(b.title)));
     }
@@ -181,7 +227,7 @@ export default function RouteED1() {
               📊 Ir a la pre-evaluación
             </Link>
             <Link
-              to="/buscar"
+              to="/buscar?materia=ed1"
               className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border hover:bg-slate-50 text-slate-800 text-sm shadow-sm"
             >
               🔎 Explorar apuntes
@@ -246,7 +292,7 @@ export default function RouteED1() {
                     📊 Empezar pre-evaluación
                   </Link>
                   <Link
-                    to="/buscar"
+                    to="/buscar?materia=ed1"
                     className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50"
                   >
                     🔎 Explorar apuntes
@@ -255,7 +301,7 @@ export default function RouteED1() {
               </div>
             )}
 
-            {/* Por dificultad (si viene) */}
+            {/* Por dificultad */}
             {!!byDiff?.length && (
               <section className="rounded-2xl border bg-white shadow-sm p-5">
                 <h2 className="text-lg font-bold mb-3">Desempeño por dificultad</h2>
@@ -273,7 +319,7 @@ export default function RouteED1() {
               </section>
             )}
 
-            {/* Por bloques (resumen de ruta) */}
+            {/* Por bloques */}
             <section className="rounded-2xl border bg-white shadow-sm p-5">
               <div className="flex items-center justify-between gap-3 mb-3">
                 <h2 className="text-lg font-bold">Progreso por bloques</h2>
@@ -311,7 +357,7 @@ export default function RouteED1() {
                         </div>
                         <div className="text-[11px] text-slate-500 mt-1">{pct}%</div>
 
-                        {/* Recomendaciones básicas */}
+                        {/* Recomendaciones */}
                         <div className="mt-3 text-sm">
                           {pct >= 80 ? (
                             <div className="text-emerald-700">✔️ Bien dominado. Repasa ejercicios de refuerzo.</div>
@@ -347,7 +393,7 @@ export default function RouteED1() {
                 📊 Abrir pre-evaluación
               </Link>
               <Link
-                to="/buscar"
+                to="/buscar?materia=ed1"
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50"
               >
                 🔎 Buscar apuntes
@@ -363,8 +409,7 @@ export default function RouteED1() {
         )}
       </main>
 
-      {/* Slide-over de recursos (panel lateral) */}
-      {/* Fondo */}
+      {/* Slide-over de recursos */}
       {openBlock && (
         <div
           className="fixed inset-0 z-40 bg-black/40"
@@ -372,7 +417,6 @@ export default function RouteED1() {
           aria-hidden="true"
         />
       )}
-      {/* Panel */}
       <aside
         className={cx(
           'fixed right-0 top-0 z-50 h-full w-full max-w-xl bg-white shadow-2xl border-l transform transition-transform',
@@ -400,12 +444,46 @@ export default function RouteED1() {
 
           {/* Contenido */}
           <div className="flex-1 overflow-y-auto p-4">
-            {resLoading && <div className="text-slate-600">Cargando recursos…</div>}
-            {resErr && (
-              <div className="p-3 rounded-xl border bg-rose-50 text-rose-800">{resErr}</div>
+            {/* Apuntes (plataforma) — SOLO Abrir archivo */}
+            {notesLoading && <div className="text-slate-600 mb-3">Buscando apuntes…</div>}
+            {notesErr && <div className="p-3 rounded-xl border bg-rose-50 text-rose-800 mb-4">{notesErr}</div>}
+            {!notesLoading && !notesErr && relatedNotes.length > 0 && (
+              <section className="mb-6">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xl">{TIPO_ICON.apunte}</span>
+                  <h4 className="font-semibold">Apuntes (plataforma)</h4>
+                </div>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  {relatedNotes.map((n) => (
+                    <article key={n.id} className="rounded-xl border bg-white hover:shadow-sm transition-shadow overflow-hidden p-3">
+                      <div className="font-semibold line-clamp-2" title={n.titulo}>{n.titulo}</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+                        {n.autor && <span className="px-2 py-0.5 rounded-full bg-slate-100">{n.autor}</span>}
+                        <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">Apunte</span>
+                      </div>
+                      {n.url && (
+                        <div className="mt-2">
+                          <a
+                            href={n.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="rounded-lg border px-2.5 py-1 text-sm hover:bg-slate-50"
+                          >
+                            📂 Abrir archivo
+                          </a>
+                        </div>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              </section>
             )}
 
-            {!resLoading && !resErr && resources.length === 0 && (
+            {/* Recursos curatoriales */}
+            {resLoading && <div className="text-slate-600">Cargando recursos…</div>}
+            {resErr && <div className="p-3 rounded-xl border bg-rose-50 text-rose-800">{resErr}</div>}
+
+            {!resLoading && !resErr && resources.length === 0 && relatedNotes.length === 0 && (
               <div className="rounded-xl border bg-slate-50 text-slate-700 p-4">
                 Aún no hay recursos registrados para este bloque.
               </div>
@@ -425,7 +503,6 @@ export default function RouteED1() {
                           key={r.id}
                           className="rounded-xl border bg-white hover:shadow-sm transition-shadow overflow-hidden"
                         >
-                          {/* Thumb opcional */}
                           {r.thumb ? (
                             <a href={r.url} target="_blank" rel="noreferrer" className="block">
                               <img

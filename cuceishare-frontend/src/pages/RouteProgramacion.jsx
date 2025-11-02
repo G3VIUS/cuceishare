@@ -69,7 +69,7 @@ export default function RouteProgramacion() {
         setSessionId(sumRes.data?.sessionId || resMe.data?.sessionId || null);
         setSummary(sumRes.data?.blocks || []);
         setTotals(resMe.data?.totals || { total: 0, correct: 0, pct: 0 });
-        setByDiff(resMe.data?.byDifficulty || []);
+        setByDiff(Array.isArray(resMe.data?.byDifficulty) ? resMe.data.byDifficulty : []);
       } catch (e) {
         if (!alive) return;
         if (e?.response?.status === 401) { navigate('/login', { replace: true }); return; }
@@ -189,6 +189,24 @@ export default function RouteProgramacion() {
               <Stat label="Correctas" value={totals.correct || 0} sub={`${totals.pct || 0}%`} />
               <Stat label="Incorrectas / abiertas" value={Math.max(0, (totals.total || 0) - (totals.correct || 0))} />
             </section>
+
+            {/* NUEVO: Desempeño por dificultad */}
+            {!!byDiff?.length && (
+              <section className="rounded-2xl border bg-white shadow-sm p-5">
+                <h2 className="text-lg font-bold mb-3">Desempeño por dificultad</h2>
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {byDiff.map((d, i) => (
+                    <div key={i} className="rounded-xl border p-4">
+                      <div className="text-sm text-slate-500">Dificultad</div>
+                      <div className="text-xl font-extrabold">{d.dificultad ?? 'N/D'}</div>
+                      <div className="text-sm mt-1">
+                        {d.correctas}/{d.total} correctas • {Number(d.porcentaje || 0)}%
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
 
             {!(totals.total > 0) && (
               <div className="rounded-2xl border bg-white shadow-sm p-5">

@@ -1,3 +1,4 @@
+// index.js — CommonJS puro
 require('dotenv').config();
 
 const express = require('express');
@@ -77,9 +78,15 @@ app.use('/api/algoritmia',    require('./routes/route-algoritmia'));   // Algori
 app.use('/api/teoria',        require('./routes/route-teoria'));       // Teoría de la Computación
 app.use('/api/programacion',  require('./routes/route-programacion')); // Programación
 app.use('/api/ingsoft',       require('./routes/route-ingsoft'));      // Ingeniería de Software
-app.use('/api/seginf',     require('./routes/route-seginf'));
-app.use('/admin/apuntes',  require('./routes/admin-apuntes'));
-app.use('/admin/contenido', require('./routes/admin-contenido'));
+app.use('/api/seginf',        require('./routes/route-seginf'));
+
+app.use('/admin/apuntes',     require('./routes/admin-apuntes'));
+app.use('/admin/contenido',   require('./routes/admin-contenido'));
+
+// ---- Stub opcional para evitar errores del frontend si aún llama /api/ask ----
+app.post('/api/ask', (_req, res) => {
+  return res.status(503).json({ error: 'Asistente de IA deshabilitado en el servidor.' });
+});
 
 /* =======================
    Healthcheck y raíz

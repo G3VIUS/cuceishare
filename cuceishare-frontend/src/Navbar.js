@@ -1,84 +1,98 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 
-// Slugs de ruta reales (coinciden con App.js)
+/* ===== Materias (alineadas con Home) ===== */
 const SUBJECTS = [
-  { slug: 'ed1',            nombre: 'Estructuras de Datos I' },
-  { slug: 'aserv',          nombre: 'Administración de Servidores' },
-  { slug: 'mineria-datos',  nombre: 'Minería de Datos' },
-  { slug: 'redes',          nombre: 'Redes' },
-  { slug: 'algoritmia',     nombre: 'Algoritmia' },
-  { slug: 'teoria',         nombre: 'Teoría de la Computación' },
+  { slug: 'ed1',            nombre: 'Estructuras de Datos I',  routeSlug: 'ed1',            preSlug: 'ed1' },
+  { slug: 'aserv',          nombre: 'Administración de Servidores', routeSlug: 'aserv',     preSlug: 'aserv' },
+  { slug: 'mineria-datos',  nombre: 'Minería de Datos',        routeSlug: 'mineria-datos',  preSlug: 'mineria-datos' },
+  { slug: 'redes',          nombre: 'Redes',                   routeSlug: 'redes',          preSlug: 'redes' },
+  { slug: 'algoritmia',     nombre: 'Algoritmia',              routeSlug: 'algoritmia',     preSlug: 'algoritmia' },
+  { slug: 'programacion',   nombre: 'Programación',            routeSlug: 'programacion',   preSlug: 'programacion' },
+  { slug: 'ingsoft',        nombre: 'Ingeniería de Software',  routeSlug: 'ingsoft',        preSlug: 'ingsoft' },
+  { slug: 'seguridad',      nombre: 'Seguridad de la Información', routeSlug: 'seginf',    preSlug: 'seginf' },
+  { slug: 'teoria',         nombre: 'Teoría de la Computación', routeSlug: 'teoria',       preSlug: 'teoria' },
 ];
 
 const LS_SUBJECT = 'lastSubjectSlug';
 const cx = (...xs) => xs.filter(Boolean).join(' ');
+const safeParse = (str) => { try { return JSON.parse(str || 'null'); } catch { return null; } };
+const isPath = (pathname, starts) => starts.some(s => pathname.startsWith(s));
+const findSubjectByAny = (code) =>
+  code ? SUBJECTS.find(s => [s.slug, s.routeSlug, s.preSlug].includes(code)) || null : null;
 
 export default function Navbar() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
 
-  // sesión
+  // Sesión — SOLO token = sesión válida
   const token = localStorage.getItem('token');
-  const legacyUserStr = localStorage.getItem('usuario');
-  const legacyUser = safeParse(legacyUserStr);
-  const isAuthed = !!token || !!legacyUserStr;
+  const legacyUser = safeParse(localStorage.getItem('usuario'));
+  const isAuthed = Boolean(token);
 
-  // subject inicial (URL -> LS -> fallback)
+  // Limpia usuario “huérfano” si no hay token
+  useEffect(() => {
+    if (!token && legacyUser) localStorage.removeItem('usuario');
+  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Materia seleccionada (URL -> LS -> fallback)
   const initialSubject = useMemo(() => {
     const parts = pathname.split('/').filter(Boolean);
-    const slugFromUrl =
-      ['pre-eval', 'ruta', 'content', 'practice'].includes(parts[0]) ? parts[1] : null;
+    const codeFromUrl = ['pre-eval', 'ruta', 'content', 'practice'].includes(parts[0]) ? parts[1] : null;
+    const fromUrl = findSubjectByAny(codeFromUrl)?.slug;
     const stored = localStorage.getItem(LS_SUBJECT);
     const fallback = SUBJECTS[0].slug;
-    const candidate = slugFromUrl || stored || fallback;
+    const candidate = fromUrl || stored || fallback;
     return SUBJECTS.some(s => s.slug === candidate) ? candidate : fallback;
   }, [pathname]);
 
   const [subject, setSubject] = useState(initialSubject);
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const current = SUBJECTS.find(s => s.slug === subject) ?? SUBJECTS[0];
+  const rSlug = current.routeSlug || current.slug;
+  const pSlug = current.preSlug   || current.slug;
 
-  // Persiste selección
   useEffect(() => { localStorage.setItem(LS_SUBJECT, subject); }, [subject]);
-
-  // Sincroniza si entras directo por URL
   useEffect(() => {
     const parts = pathname.split('/').filter(Boolean);
-    const slugFromUrl =
-      ['pre-eval', 'ruta', 'content', 'practice'].includes(parts[0]) ? parts[1] : null;
-    if (slugFromUrl && SUBJECTS.some(s => s.slug === slugFromUrl) && slugFromUrl !== subject) {
-      setSubject(slugFromUrl);
-    }
+    const codeFromUrl = ['pre-eval', 'ruta', 'content', 'practice'].includes(parts[0]) ? parts[1] : null;
+    const found = findSubjectByAny(codeFromUrl);
+    if (found && found.slug !== subject) setSubject(found.slug);
   }, [pathname, subject]);
 
-  // Bloquea scroll cuando el menú está abierto
+  // Estado UI móvil
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [userOpen, setUserOpen] = useState(false);
+
+  // Bloqueo scroll cuando abre el sheet
   useEffect(() => {
-    if (mobileOpen) document.body.style.overflow = 'hidden';
-    else document.body.style.overflow = '';
+    document.body.style.overflow = mobileOpen ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
   }, [mobileOpen]);
 
-  // Cierra en cambio de ruta
-  useEffect(() => { setMobileOpen(false); }, [pathname]);
+  // Cerrar en cambio de ruta
+  useEffect(() => { setMobileOpen(false); setUserOpen(false); }, [pathname]);
 
-  // Cierra con Esc y al pasar a md en resize
+  // Cerrar con Escape y click afuera del dropdown
   useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && setMobileOpen(false);
-    const onResize = () => { if (window.innerWidth >= 768) setMobileOpen(false); };
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('resize', onResize);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('resize', onResize);
+    const onKey = (e) => e.key === 'Escape' && (setMobileOpen(false), setUserOpen(false));
+    const onClick = (e) => {
+      const dd = document.getElementById('user-dd');
+      if (dd && !dd.contains(e.target)) setUserOpen(false);
     };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('click', onClick);
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('click', onClick); };
   }, []);
 
-  const current = SUBJECTS.find(s => s.slug === subject) ?? SUBJECTS[0];
+  // Navegación ligada a materia
+  const go = (to) => () => { setMobileOpen(false); setUserOpen(false); navigate(to); };
+  const goPreEval = go(`/pre-eval/${pSlug}`);
+  const goRuta    = go(`/ruta/${rSlug}`);
+  const goBuscar  = go(`/buscar?materia=${rSlug}`);
 
-  const goPreEval = () => { setMobileOpen(false); navigate(`/pre-eval/${current.slug}`); };
-  const goRuta    = () => { setMobileOpen(false); navigate(`/ruta/${current.slug}`); };
-  const goBuscar  = () => { setMobileOpen(false); navigate(`/buscar?materia=${current.slug}`); };
-  const goLogin   = () => { setMobileOpen(false); navigate('/login'); };
+  // Seguridad en “Subir” y “Perfil”
+  const goSubir   = () => { setMobileOpen(false); setUserOpen(false); navigate(isAuthed ? '/subir'  : '/login'); };
+  const goPerfil  = () => { setMobileOpen(false); setUserOpen(false); navigate(isAuthed ? '/perfil' : '/login'); };
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -87,42 +101,42 @@ export default function Navbar() {
       localStorage.removeItem(`${s.slug}:preeval:draft`);
       localStorage.removeItem(`${s.slug}:route:progress`);
     });
-    setMobileOpen(false);
+    setUserOpen(false);
     navigate('/login');
   };
 
-  const isActive = (key) => {
-    if (key === 'pre')   return pathname.startsWith('/pre-eval/');
-    if (key === 'ruta')  return pathname.startsWith('/ruta/');
-    if (key === 'buscar')return pathname.startsWith('/buscar');
-    return false;
-  };
+  // Estilos
+  const btn  = "px-3 h-11 md:h-9 inline-flex items-center justify-center rounded-lg border text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300";
+  const cta  = "px-3 h-11 md:h-9 inline-flex items-center justify-center rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-black focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400";
+  const pill = "px-3 h-10 md:h-8 rounded-full border bg-white text-sm";
 
-  const btn        = "text-sm px-3 py-2 rounded-md border hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300";
-  const btnPrimary = "text-sm px-3 py-2 rounded-md bg-slate-900 text-white hover:bg-black focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400";
+  const isPre  = isPath(pathname, ['/pre-eval/']);
+  const isRuta = isPath(pathname, ['/ruta/']);
+  const isFind = isPath(pathname, ['/buscar']);
 
   return (
-    <header className="sticky top-0 z-50 border-b bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/70 pt-[env(safe-area-inset-top)]">
-      {/* enlace accesible para saltar contenido */}
+    <header className="sticky top-0 z-50 bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/65 border-b pt-[env(safe-area-inset-top)]">
+      {/* Skip link */}
       <a href="#main" className="sr-only focus:not-sr-only absolute left-2 top-2 bg-white border px-3 py-1 rounded-md">
         Saltar al contenido
       </a>
 
-      <nav className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 h-14 md:h-16 flex items-center justify-between">
+      <nav className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 h-16 md:h-16 grid grid-cols-[auto_1fr_auto] items-center gap-3">
         {/* Marca + selector */}
         <div className="flex items-center gap-3 min-w-0">
-          <Link to="/" className="text-[15px] font-semibold tracking-tight text-slate-900">
+          {/* Logo a un solo color */}
+          <Link to="/" className="text-[16px] sm:text-base font-black tracking-tight text-slate-900">
             CUCEIShare
           </Link>
 
-          {/* Selector (desktop) */}
+          {/* Selector materia (md+) */}
           <div className="hidden md:flex items-center gap-2">
-            <label htmlFor="subject" className="sr-only">Materia</label>
+            <label htmlFor="nav-subject" className="sr-only">Materia</label>
             <select
-              id="subject"
+              id="nav-subject"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
-              className="text-sm border rounded-md px-2 py-1 bg-white"
+              className={pill}
               title="Materia"
             >
               {SUBJECTS.map(s => (
@@ -132,36 +146,42 @@ export default function Navbar() {
           </div>
         </div>
 
-        {/* Acciones (desktop) */}
-        <div className="hidden md:flex items-center gap-2">
-          <button onClick={goPreEval} className={cx(btn, isActive('pre') && 'bg-slate-100 border-slate-300')} title="Pre-evaluación">Pre-evaluación</button>
-          <button onClick={goRuta} className={cx(btnPrimary, isActive('ruta') && 'ring-2 ring-slate-400')} title="Mi ruta">Mi ruta</button>
-          <button onClick={goBuscar} className={cx(btn, isActive('buscar') && 'bg-slate-100 border-slate-300')} title="Explorar apuntes">Apuntes</button>
-          {isAuthed ? (
-            <button onClick={handleLogout} className="text-sm text-slate-500 hover:text-slate-900 ml-1" title="Cerrar sesión">
-              Salir
-            </button>
-          ) : (
-            <button onClick={goLogin} className="text-sm text-slate-500 hover:text-slate-900 ml-1">Entrar</button>
-          )}
+        {/* Acciones centrales (md+) */}
+        <div className="hidden md:flex items-center justify-center gap-2">
+          <button onClick={goPreEval} className={cx(btn, isPre && "bg-slate-100 border-slate-300")} title="Pre-evaluación">
+            Pre-evaluación
+          </button>
+          <button onClick={goRuta} className={cx(cta, isRuta && "ring-2 ring-slate-400")} title="Mi ruta">
+            Mi ruta
+          </button>
+          <button onClick={goBuscar} className={cx(btn, isFind && "bg-slate-100 border-slate-300")} title="Explorar apuntes">
+            Apuntes
+          </button>
         </div>
 
-        {/* Botón menú (mobile, pulido) */}
-        <div className="md:hidden flex items-center gap-2">
-          {isAuthed && (
-            <Link
-              to="/perfil"
-              aria-label="Ir a mi perfil"
-              className="inline-grid place-items-center h-9 w-9 rounded-full bg-slate-100 text-slate-700 text-sm font-semibold ring-1 ring-slate-200"
-            >
-              {(legacyUser?.nombre?.[0] || '👤')}
-            </Link>
-          )}
+        {/* Lado derecho */}
+        <div className="flex items-center gap-2 justify-self-end">
+          {/* Subir / Login (seguro) */}
+          <button onClick={goSubir} className="hidden md:inline-flex px-3 h-9 rounded-lg border text-sm font-medium hover:bg-slate-50">
+            {isAuthed ? 'Subir' : 'Iniciar sesión'}
+          </button>
+
+          {/* Perfil seguro (siempre disponible) */}
+          <button
+            onClick={goPerfil}
+            aria-label="Perfil"
+            className="hidden md:inline-grid place-items-center h-9 w-9 rounded-full bg-slate-100 ring-1 ring-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            title={isAuthed ? 'Mi perfil' : 'Iniciar sesión'}
+          >
+            {isAuthed ? (legacyUser?.nombre?.[0] || '👤') : '👤'}
+          </button>
+
+          {/* Hamburguesa (móvil) */}
           <button
             aria-label="Abrir menú"
             aria-expanded={mobileOpen}
             onClick={() => setMobileOpen(o => !o)}
-            className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-white/90 ring-1 ring-slate-200 shadow-sm hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 active:scale-95 transition"
+            className="md:hidden inline-flex h-11 w-11 items-center justify-center rounded-xl bg-white/90 ring-1 ring-slate-200 shadow-sm hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 active:scale-95 transition"
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" className="text-slate-800">
               <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
@@ -170,61 +190,67 @@ export default function Navbar() {
         </div>
       </nav>
 
-      {/* Panel móvil */}
+      {/* Menú móvil: sheet accesible */}
       <div
         className={cx(
-          "md:hidden transition-[max-height] overflow-hidden border-t bg-white shadow-md",
-          mobileOpen ? "max-h-[80vh]" : "max-h-0"
+          "md:hidden transition-[max-height] duration-300 overflow-hidden border-t bg-white shadow",
+          mobileOpen ? "max-h-[85vh]" : "max-h-0"
         )}
       >
-        <div className="max-w-7xl mx-auto px-3 py-3 space-y-3">
-          {/* Selector móvil */}
+        <div className="px-3 sm:px-4 py-3 space-y-4">
+          {/* Selector materia */}
           <div>
             <label className="block text-xs text-slate-500 mb-1">Materia</label>
             <select
               value={subject}
-              onChange={(e) => { setSubject(e.target.value); setMobileOpen(false); }}
-              className="w-full rounded-md border bg-white px-3 py-2.5 text-[15px]"
+              onChange={(e) => setSubject(e.target.value)}
+              className="w-full rounded-lg border bg-white px-3 py-3 text-[15px]"
               aria-label="Materia"
             >
-              {SUBJECTS.map(s => (
-                <option key={s.slug} value={s.slug}>{s.nombre}</option>
-              ))}
+              {SUBJECTS.map(s => (<option key={s.slug} value={s.slug}>{s.nombre}</option>))}
             </select>
           </div>
 
-          {/* Acciones */}
+          {/* Acciones principales */}
           <div className="grid grid-cols-2 gap-2">
-            <button onClick={goPreEval} className={cx("min-h-11 rounded-md border px-3 text-[15px]", isActive('pre') && "bg-slate-50 border-slate-300")}>
+            <button onClick={goPreEval} className={cx("min-h-12 rounded-lg border px-3 text-[15px] font-medium", isPre && "bg-slate-50 border-slate-300")}>
               Pre-evaluación
             </button>
-            <button onClick={goRuta} className="min-h-11 rounded-md bg-slate-900 text-white px-3 text-[15px]">
+            <button onClick={goRuta} className="min-h-12 rounded-lg bg-slate-900 text-white px-3 text-[15px] font-semibold">
               Mi ruta
             </button>
-            <button onClick={goBuscar} className={cx("min-h-11 rounded-md border px-3 text-[15px] col-span-2", isActive('buscar') && "bg-slate-50 border-slate-300")}>
+            <button onClick={goBuscar} className={cx("min-h-12 rounded-lg border px-3 text-[15px] font-medium col-span-2", isFind && "bg-slate-50 border-slate-300")}>
               Apuntes
             </button>
           </div>
 
-          {/* Sesión */}
-          <div className="pt-1">
-            {isAuthed ? (
-              <button onClick={handleLogout} className="text-sm text-slate-500 hover:text-slate-900">
-                Cerrar sesión
-              </button>
-            ) : (
-              <Link to="/login" onClick={() => setMobileOpen(false)} className="text-sm text-slate-500 hover:text-slate-900">
-                Iniciar sesión
-              </Link>
-            )}
+          {/* Subir / Perfil / Sesión (seguro) */}
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={goSubir} className="rounded-lg border px-3 h-11 text-[15px] font-medium">
+              {isAuthed ? 'Subir apunte' : 'Iniciar sesión'}
+            </button>
+            <button onClick={goPerfil} className="rounded-lg border px-3 h-11 text-[15px] font-medium">
+              {isAuthed ? 'Mi perfil' : 'Ir a login'}
+            </button>
           </div>
+
+          {/* Logout si aplica */}
+          {isAuthed ? (
+            <div className="pt-1">
+              <button onClick={handleLogout} className="text-sm text-rose-700">Cerrar sesión</button>
+            </div>
+          ) : (
+            <div className="text-sm">
+              <Link to="/register" onClick={() => setMobileOpen(false)} className="underline underline-offset-2">
+                Crear cuenta
+              </Link>
+            </div>
+          )}
+
+          {/* Safe-area bottom padding en iOS */}
+          <div className="pb-[env(safe-area-inset-bottom)]" />
         </div>
       </div>
     </header>
   );
-}
-
-/* util seguro para JSON.parse */
-function safeParse(str) {
-  try { return JSON.parse(str || 'null'); } catch { return null; }
 }

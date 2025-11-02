@@ -10,6 +10,7 @@ const API =
 
 const cx = (...xs) => xs.filter(Boolean).join(' ');
 
+/* UI */
 function Stat({ label, value, sub }) {
   return (
     <div className="rounded-2xl border bg-white shadow-sm p-4">
@@ -20,19 +21,43 @@ function Stat({ label, value, sub }) {
   );
 }
 
+/* Catálogos */
 const TIPO_LABEL = { pdf: 'PDF', libro: 'Libro', web: 'Artículo/Guía', repo: 'Repositorio', documento: 'Documento' };
 const TIPO_ICON  = { pdf: '📄',  libro: '📚',   web: '🧭',           repo: '📦',        documento: '📝' };
 const TIPO_ORDER = ['pdf', 'libro', 'web', 'repo', 'documento'];
+
+/* Helpers */
+const safeJSON = (s) => { try { return JSON.parse(s || 'null'); } catch { return null; } };
+const extractKeywords = (s) =>
+  String(s || '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 6)
+    .join(' ');
+const normalizeNotes = (raw) => {
+  const list = Array.isArray(raw?.items) ? raw.items
+            : Array.isArray(raw?.rows)  ? raw.rows
+            : Array.isArray(raw)        ? raw
+            : [];
+  return list.map(n => ({
+    id: n.id ?? n.apunte_id ?? n.slug ?? String(Math.random()).slice(2),
+    titulo: n.titulo ?? n.title ?? 'Apunte',
+    autor: n.autor ?? n.autor_nombre ?? n.user_name ?? n.owner ?? null,
+    url: n.url ?? n.file_url ?? n.link ?? null,
+    created_at: n.created_at ?? n.fecha ?? null,
+  }));
+};
 
 export default function RouteAdminServ() {
   const navigate = useNavigate();
 
   // Sesión
-  const user = useMemo(() => {
-    try { return JSON.parse(localStorage.getItem('usuario') || 'null'); } catch { return null; }
-  }, []);
+  const user = useMemo(() => safeJSON(localStorage.getItem('usuario')), []);
   const token = useMemo(() => localStorage.getItem('token') || '', []);
   const isAuthed = !!user && !!token;
+  const HEADERS = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
   // Estado
   const [loading, setLoading] = useState(true);
@@ -42,19 +67,24 @@ export default function RouteAdminServ() {
   const [totals, setTotals] = useState({ total: 0, correct: 0, pct: 0 });
   const [byDiff, setByDiff] = useState([]);
 
-  // Recursos (slide-over)
+  // Slide-over recursos
   const [openBlock, setOpenBlock] = useState(null);
   const [openBlockTitle, setOpenBlockTitle] = useState('');
   const [resLoading, setResLoading] = useState(false);
   const [resErr, setResErr] = useState('');
   const [resources, setResources] = useState([]); // excluye videos en backend
 
+  // Apuntes relacionados (solo botón "Abrir archivo")
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [notesErr, setNotesErr] = useState('');
+  const [relatedNotes, setRelatedNotes] = useState([]);
+
   // Redirección si no hay sesión
   useEffect(() => {
     if (!isAuthed) navigate('/login', { replace: true });
   }, [isAuthed, navigate]);
 
-  // Carga resultados de la última sesión
+  // Carga resultados de la última sesión + fallback de totales desde bloques
   useEffect(() => {
     let alive = true;
     if (!isAuthed) return;
@@ -62,19 +92,35 @@ export default function RouteAdminServ() {
     (async () => {
       setLoading(true); setErr('');
       try {
-        const headers = { Authorization: `Bearer ${token}` };
-
         const [sumRes, resMe] = await Promise.all([
-          axios.get(`${API}/api/aserv/route/summary`, { headers, params: { _t: Date.now() } }),
-          axios.get(`${API}/api/aserv/results/me`,    { headers, params: { _t: Date.now() } }),
+          axios.get(`${API}/api/aserv/route/summary`, { headers: HEADERS, params: { _t: Date.now() } }),
+          axios.get(`${API}/api/aserv/results/me`,    { headers: HEADERS, params: { _t: Date.now() } }),
         ]);
-
         if (!alive) return;
 
-        setSessionId(sumRes.data?.sessionId || resMe.data?.sessionId || null);
-        setSummary(sumRes.data?.blocks || []);
-        setTotals(resMe.data?.totals || { total: 0, correct: 0, pct: 0 });
-        setByDiff(resMe.data?.byDifficulty || []);
+        const blocks = Array.isArray(sumRes.data?.blocks) ? sumRes.data.blocks : [];
+        const sess = sumRes.data?.sessionId || resMe.data?.sessionId || null;
+
+        setSessionId(sess);
+        setSummary(blocks);
+
+        // Totales del server
+        const srvTotals = resMe.data?.totals || {};
+        const tServer = Number(srvTotals.total ?? 0);
+        const cServer = Number(srvTotals.correct ?? 0);
+        const pServer = Number.isFinite(Number(srvTotals.pct)) ? Number(srvTotals.pct) : 0;
+
+        // Fallback con bloques
+        const tBlocks = blocks.reduce((acc, b) => acc + Number(b.total_option || 0), 0);
+        const cBlocks = blocks.reduce((acc, b) => acc + Number(b.correct_option || 0), 0);
+        const pBlocks = tBlocks ? Math.round((cBlocks / tBlocks) * 100) : 0;
+
+        const finalTotals = (tServer === 0 && tBlocks > 0)
+          ? { total: tBlocks, correct: cBlocks, pct: pBlocks }
+          : { total: tServer, correct: cServer, pct: pServer };
+
+        setTotals(finalTotals);
+        setByDiff(Array.isArray(resMe.data?.byDifficulty) ? resMe.data.byDifficulty : []);
       } catch (e) {
         if (!alive) return;
         if (e?.response?.status === 401) { navigate('/login', { replace: true }); return; }
@@ -85,22 +131,22 @@ export default function RouteAdminServ() {
     })();
 
     return () => { alive = false; };
-  }, [isAuthed, token, navigate]);
+  }, [isAuthed, HEADERS, navigate]);
 
-  // Abrir slide-over de recursos
+  // Abrir slide-over de recursos curatoriales
   useEffect(() => {
     let alive = true;
     if (!openBlock) return;
     (async () => {
       setResLoading(true); setResErr(''); setResources([]);
       try {
-        const headers = { Authorization: `Bearer ${token}` };
         const { data } = await axios.get(`${API}/api/aserv/route/resources`, {
-          headers,
+          headers: HEADERS,
           params: { blockId: openBlock, _t: Date.now() },
         });
         if (!alive) return;
-        setResources(Array.isArray(data?.items) ? data.items : []);
+        const arr = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
+        setResources(arr);
       } catch (e) {
         if (!alive) return;
         setResErr(e?.response?.data?.error || 'No se pudieron cargar los recursos');
@@ -109,7 +155,31 @@ export default function RouteAdminServ() {
       }
     })();
     return () => { alive = false; };
-  }, [openBlock, token]);
+  }, [openBlock, HEADERS]);
+
+  // Apuntes relacionados por bloque — solo “📂 Abrir archivo”
+  useEffect(() => {
+    let alive = true;
+    if (!openBlock) return;
+    (async () => {
+      setNotesLoading(true); setNotesErr(''); setRelatedNotes([]);
+      try {
+        const q = extractKeywords(openBlockTitle);
+        const { data } = await axios.get(`${API}/apuntes`, {
+          headers: HEADERS,
+          params: { blockId: openBlock, materia: 'aserv', q, _t: Date.now() },
+        });
+        if (!alive) return;
+        setRelatedNotes(normalizeNotes(data));
+      } catch (e) {
+        if (!alive) return;
+        setNotesErr(e?.response?.data?.error || 'No se pudieron cargar los apuntes');
+      } finally {
+        if (alive) setNotesLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [openBlock, openBlockTitle, HEADERS]);
 
   // Derivados
   const incorrect = Math.max(0, (totals.total || 0) - (totals.correct || 0));
@@ -160,16 +230,10 @@ export default function RouteAdminServ() {
           </div>
 
           <div className="hidden md:flex items-center gap-2">
-            <Link
-              to="/pre-eval/aserv"
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm shadow-sm"
-            >
+            <Link to="/pre-eval/aserv" className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm shadow-sm">
               📊 Ir a la pre-evaluación
             </Link>
-            <Link
-              to="/buscar"
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border hover:bg-slate-50 text-slate-800 text-sm shadow-sm"
-            >
+            <Link to="/buscar" className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border hover:bg-slate-50 text-slate-800 text-sm shadow-sm">
               🔎 Explorar apuntes
             </Link>
           </div>
@@ -178,6 +242,7 @@ export default function RouteAdminServ() {
 
       {/* Contenido */}
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+        {/* Loading */}
         {loading && (
           <div className="grid md:grid-cols-3 gap-4">
             {Array.from({ length: 3 }).map((_, i) => (
@@ -195,50 +260,25 @@ export default function RouteAdminServ() {
           </div>
         )}
 
+        {/* Error */}
         {err && !loading && (
           <div className="p-4 rounded-xl bg-rose-50 border text-rose-700">
             ⚠️ {err}
-            <button
-              onClick={() => window.location.reload()}
-              className="ml-3 px-3 py-1.5 rounded-lg bg-white border hover:bg-slate-50"
-            >
+            <button onClick={() => window.location.reload()} className="ml-3 px-3 py-1.5 rounded-lg bg-white border hover:bg-slate-50">
               Reintentar
             </button>
           </div>
         )}
 
+        {/* Datos */}
         {!loading && !err && (
           <>
             {/* Resumen superior */}
             <section className="grid md:grid-cols-3 gap-4">
               <Stat label="Preguntas respondidas" value={totals.total || 0} />
               <Stat label="Correctas" value={totals.correct || 0} sub={`${totals.pct || 0}%`} />
-              <Stat label="Incorrectas / abiertas" value={Math.max(0, (totals.total || 0) - (totals.correct || 0))} />
+              <Stat label="Incorrectas / abiertas" value={incorrect} />
             </section>
-
-            {/* Sugerencia si no hay resultados */}
-            {!(totals.total > 0) && (
-              <div className="rounded-2xl border bg-white shadow-sm p-5">
-                <div className="text-lg font-bold mb-1">Aún no tienes resultados en Administración de Servidores</div>
-                <p className="text-slate-600 mb-3">
-                  Realiza la <span className="font-semibold">pre-evaluación</span> para generar tu ruta de estudio.
-                </p>
-                <div className="flex gap-2">
-                  <Link
-                    to="/pre-eval/aserv"
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white"
-                  >
-                    📊 Empezar pre-evaluación
-                  </Link>
-                  <Link
-                    to="/buscar"
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50"
-                  >
-                    🔎 Explorar apuntes
-                  </Link>
-                </div>
-              </div>
-            )}
 
             {/* Por dificultad (si viene) */}
             {!!byDiff?.length && (
@@ -256,6 +296,24 @@ export default function RouteAdminServ() {
                   ))}
                 </div>
               </section>
+            )}
+
+            {/* Sugerencia si no hay resultados */}
+            {!(totals.total > 0) && (
+              <div className="rounded-2xl border bg-white shadow-sm p-5">
+                <div className="text-lg font-bold mb-1">Aún no tienes resultados en Administración de Servidores</div>
+                <p className="text-slate-600 mb-3">
+                  Realiza la <span className="font-semibold">pre-evaluación</span> para generar tu ruta de estudio.
+                </p>
+                <div className="flex gap-2">
+                  <Link to="/pre-eval/aserv" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white">
+                    📊 Empezar pre-evaluación
+                  </Link>
+                  <Link to="/buscar" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50">
+                    🔎 Explorar apuntes
+                  </Link>
+                </div>
+              </div>
             )}
 
             {/* Por bloques (resumen de ruta) */}
@@ -324,22 +382,13 @@ export default function RouteAdminServ() {
 
             {/* Acciones finales */}
             <section className="flex flex-wrap items-center gap-2">
-              <Link
-                to="/pre-eval/aserv"
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white"
-              >
+              <Link to="/pre-eval/aserv" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white">
                 📊 Abrir pre-evaluación
               </Link>
-              <Link
-                to="/buscar"
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50"
-              >
+              <Link to="/buscar" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50">
                 🔎 Buscar apuntes
               </Link>
-              <Link
-                to="/"
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50"
-              >
+              <Link to="/" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50">
                 🏠 Ir al inicio
               </Link>
             </section>
@@ -347,10 +396,10 @@ export default function RouteAdminServ() {
         )}
       </main>
 
+      {/* Backdrop del slide-over */}
+      {openBlock && <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setOpenBlock(null)} aria-hidden="true" />}
+
       {/* Slide-over de recursos */}
-      {openBlock && (
-        <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setOpenBlock(null)} aria-hidden="true" />
-      )}
       <aside
         className={cx(
           'fixed right-0 top-0 z-50 h-full w-full max-w-xl bg-white shadow-2xl border-l transform transition-transform',
@@ -376,10 +425,41 @@ export default function RouteAdminServ() {
           </div>
 
           <div className="flex-1 overflow-y-auto p-4">
+            {/* Apuntes (plataforma) */}
+            {notesLoading && <div className="text-slate-600 mb-3">Buscando apuntes…</div>}
+            {notesErr && <div className="p-3 rounded-xl border bg-rose-50 text-rose-800 mb-4">{notesErr}</div>}
+            {!notesLoading && !notesErr && relatedNotes.length > 0 && (
+              <section className="mb-6">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xl">🗒️</span>
+                  <h4 className="font-semibold">Apuntes (plataforma)</h4>
+                </div>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  {relatedNotes.map((n) => (
+                    <article key={n.id} className="rounded-xl border bg-white hover:shadow-sm transition-shadow overflow-hidden p-3">
+                      <div className="font-semibold line-clamp-2" title={n.titulo}>{n.titulo}</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+                        {n.autor && <span className="px-2 py-0.5 rounded-full bg-slate-100">{n.autor}</span>}
+                        <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">Apunte</span>
+                      </div>
+                      {n.url && (
+                        <div className="mt-2">
+                          <a href={n.url} target="_blank" rel="noreferrer" className="rounded-lg border px-2.5 py-1 text-sm hover:bg-slate-50">
+                            📂 Abrir archivo
+                          </a>
+                        </div>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* Recursos curatoriales */}
             {resLoading && <div className="text-slate-600">Cargando recursos…</div>}
             {resErr && <div className="p-3 rounded-xl border bg-rose-50 text-rose-800">{resErr}</div>}
 
-            {!resLoading && !resErr && resources.length === 0 && (
+            {!resLoading && !resErr && resources.length === 0 && relatedNotes.length === 0 && (
               <div className="rounded-xl border bg-slate-50 text-slate-700 p-4">
                 Aún no hay recursos registrados para este bloque.
               </div>
