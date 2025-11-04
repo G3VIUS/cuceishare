@@ -1,4 +1,4 @@
-// src/pages/RouteProgramacion.jsx
+// src/pages/RouteMineriaDatos.jsx
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
@@ -20,11 +20,11 @@ function Stat({ label, value, sub }) {
   );
 }
 
-const TIPO_LABEL = { pdf:'PDF', libro:'Libro', web:'Artículo/Guía', repo:'Repositorio', documento:'Documento' };
-const TIPO_ICON  = { pdf:'📄', libro:'📚', web:'🧭', repo:'📦', documento:'📝' };
-const TIPO_ORDER = ['pdf','libro','web','repo','documento'];
+const TIPO_LABEL = { pdf: 'PDF', libro: 'Libro', web: 'Artículo/Guía', repo: 'Repositorio', documento: 'Documento' };
+const TIPO_ICON  = { pdf: '📄', libro: '📚', web: '🧭', repo: '📦', documento: '📝' };
+const TIPO_ORDER = ['pdf', 'libro', 'web', 'repo', 'documento'];
 
-export default function RouteProgramacion() {
+export default function RouteMineriaDatos() {
   const navigate = useNavigate();
 
   const user = useMemo(() => {
@@ -50,6 +50,7 @@ export default function RouteProgramacion() {
     if (!isAuthed) navigate('/login', { replace: true });
   }, [isAuthed, navigate]);
 
+  // ---- Carga principal (summary -> sessionId -> results) ----
   useEffect(() => {
     let alive = true;
     if (!isAuthed) return;
@@ -59,16 +60,42 @@ export default function RouteProgramacion() {
       try {
         const headers = { Authorization: `Bearer ${token}` };
 
-        const [sumRes, resMe] = await Promise.all([
-          axios.get(`${API}/api/programacion/route/summary`, { headers, params: { _t: Date.now() } }),
-          axios.get(`${API}/api/programacion/results/me`,    { headers, params: { _t: Date.now() } }),
-        ]);
-
+        // 1) Primero summary para fijar sessionId
+        const sumRes = await axios.get(`${API}/api/mineria/route/summary`, {
+          headers,
+          params: { _t: Date.now() },
+        });
         if (!alive) return;
 
-        setSessionId(sumRes.data?.sessionId || resMe.data?.sessionId || null);
-        setSummary(sumRes.data?.blocks || []);
-        setTotals(resMe.data?.totals || { total: 0, correct: 0, pct: 0 });
+        const blocks = Array.isArray(sumRes.data?.blocks) ? sumRes.data.blocks : [];
+        const sess = sumRes.data?.sessionId || null;
+
+        setSessionId(sess);
+        setSummary(blocks);
+
+        // 2) Luego results con esa sessionId (evita mezclar sesiones)
+        const resMe = await axios.get(`${API}/api/mineria/results/me`, {
+          headers,
+          params: { sessionId: sess || undefined, _t: Date.now() },
+        });
+        if (!alive) return;
+
+        // --- Normalización/fallback ---
+        const srvTotals = resMe.data?.totals || {};
+        const tServer = Number(srvTotals.total ?? 0);
+        const cServer = Number(srvTotals.correct ?? 0);
+        const pServer = Number.isFinite(Number(srvTotals.pct)) ? Number(srvTotals.pct) : 0;
+
+        const tBlocks = blocks.reduce((acc, b) => acc + Number(b.total_option || 0), 0);
+        const cBlocks = blocks.reduce((acc, b) => acc + Number(b.correct_option || 0), 0);
+        const pBlocks = tBlocks ? Math.round((cBlocks / tBlocks) * 100) : 0;
+
+        // Si el server regresó 0 pero los bloques traen info, usa el fallback de bloques
+        const finalTotals = (tServer === 0 && tBlocks > 0)
+          ? { total: tBlocks, correct: cBlocks, pct: pBlocks }
+          : { total: tServer, correct: cServer, pct: pServer };
+
+        setTotals(finalTotals);
         setByDiff(Array.isArray(resMe.data?.byDifficulty) ? resMe.data.byDifficulty : []);
       } catch (e) {
         if (!alive) return;
@@ -82,6 +109,7 @@ export default function RouteProgramacion() {
     return () => { alive = false; };
   }, [isAuthed, token, navigate]);
 
+  // ---- Carga de recursos por bloque ----
   useEffect(() => {
     let alive = true;
     if (!openBlock) return;
@@ -89,7 +117,7 @@ export default function RouteProgramacion() {
       setResLoading(true); setResErr(''); setResources([]);
       try {
         const headers = { Authorization: `Bearer ${token}` };
-        const { data } = await axios.get(`${API}/api/programacion/route/resources`, {
+        const { data } = await axios.get(`${API}/api/mineria/route/resources`, {
           headers,
           params: { blockId: openBlock, _t: Date.now() },
         });
@@ -104,6 +132,8 @@ export default function RouteProgramacion() {
     })();
     return () => { alive = false; };
   }, [openBlock, token]);
+
+  const incorrect = Math.max(0, (totals.total || 0) - (totals.correct || 0));
 
   const groupedResources = useMemo(() => {
     const g = {};
@@ -134,11 +164,11 @@ export default function RouteProgramacion() {
             <div className="truncate">
               <nav className="text-xs text-slate-500" aria-label="Breadcrumb">
                 <ol className="flex items-center gap-1">
-                  <li>Aprendizaje</li><li className="text-slate-400">/</li><li>Programación</li><li className="text-slate-400">/</li><li className="font-medium">Mi ruta</li>
+                  <li>Aprendizaje</li><li className="text-slate-400">/</li><li>Minería de Datos</li><li className="text-slate-400">/</li><li className="font-medium">Mi ruta</li>
                 </ol>
               </nav>
               <h1 className="text-lg md:text-xl font-bold tracking-tight text-slate-900">
-                Ruta de aprendizaje — <span className="text-emerald-700">Programación</span>
+                Ruta de aprendizaje — <span className="text-emerald-700">Minería de Datos</span>
               </h1>
               {user?.id && <p className="text-[11px] text-slate-500">Usuario: <span className="font-mono">#{user.id}</span></p>}
             </div>
@@ -146,11 +176,11 @@ export default function RouteProgramacion() {
 
           <div className="hidden md:flex items-center gap-2">
             <Link
-              to="/pre-eval/programacion"
+              to="/pre-eval/mineria-datos"
               className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm shadow-sm"
             >📊 Ir a la pre-evaluación</Link>
             <Link
-              to="/buscar?materia=programacion"
+              to="/buscar?materia=mineria-datos"
               className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border hover:bg-slate-50 text-slate-800 text-sm shadow-sm"
             >🔎 Explorar apuntes</Link>
           </div>
@@ -187,34 +217,16 @@ export default function RouteProgramacion() {
             <section className="grid md:grid-cols-3 gap-4">
               <Stat label="Preguntas respondidas" value={totals.total || 0} />
               <Stat label="Correctas" value={totals.correct || 0} sub={`${totals.pct || 0}%`} />
-              <Stat label="Incorrectas / abiertas" value={Math.max(0, (totals.total || 0) - (totals.correct || 0))} />
+              <Stat label="Incorrectas / abiertas" value={incorrect} />
             </section>
-
-            {/* NUEVO: Desempeño por dificultad */}
-            {!!byDiff?.length && (
-              <section className="rounded-2xl border bg-white shadow-sm p-5">
-                <h2 className="text-lg font-bold mb-3">Desempeño por dificultad</h2>
-                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {byDiff.map((d, i) => (
-                    <div key={i} className="rounded-xl border p-4">
-                      <div className="text-sm text-slate-500">Dificultad</div>
-                      <div className="text-xl font-extrabold">{d.dificultad ?? 'N/D'}</div>
-                      <div className="text-sm mt-1">
-                        {d.correctas}/{d.total} correctas • {Number(d.porcentaje || 0)}%
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
 
             {!(totals.total > 0) && (
               <div className="rounded-2xl border bg-white shadow-sm p-5">
-                <div className="text-lg font-bold mb-1">Aún no tienes resultados para Programación</div>
+                <div className="text-lg font-bold mb-1">Aún no tienes resultados para Minería de Datos</div>
                 <p className="text-slate-600 mb-3">Realiza la <span className="font-semibold">pre-evaluación</span> para generar tu ruta de estudio.</p>
                 <div className="flex gap-2">
-                  <Link to="/pre-eval/programacion" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white">📊 Empezar pre-evaluación</Link>
-                  <Link to="/buscar?materia=programacion" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50">🔎 Explorar apuntes</Link>
+                  <Link to="/pre-eval/mineria-datos" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white">📊 Empezar pre-evaluación</Link>
+                  <Link to="/buscar?materia=mineria-datos" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50">🔎 Explorar apuntes</Link>
                 </div>
               </div>
             )}
@@ -270,8 +282,8 @@ export default function RouteProgramacion() {
             </section>
 
             <section className="flex flex-wrap items-center gap-2">
-              <Link to="/pre-eval/programacion" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white">📊 Abrir pre-evaluación</Link>
-              <Link to="/buscar?materia=programacion" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50">🔎 Buscar apuntes</Link>
+              <Link to="/pre-eval/mineria-datos" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white">📊 Abrir pre-evaluación</Link>
+              <Link to="/buscar?materia=mineria-datos" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50">🔎 Buscar apuntes</Link>
               <Link to="/" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50">🏠 Ir al inicio</Link>
             </section>
           </>
@@ -315,8 +327,12 @@ export default function RouteProgramacion() {
                         <article key={r.id} className="rounded-xl border bg-white hover:shadow-sm transition-shadow overflow-hidden">
                           {r.thumb ? (
                             <a href={r.url} target="_blank" rel="noreferrer" className="block">
-                              <img src={r.thumb} alt="" className="w-full h-32 object-cover"
-                                   onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                              <img
+                                src={r.thumb}
+                                alt=""
+                                className="w-full h-32 object-cover"
+                                onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                              />
                             </a>
                           ) : null}
                           <div className="p-3">

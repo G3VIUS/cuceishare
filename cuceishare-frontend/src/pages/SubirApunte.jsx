@@ -11,16 +11,20 @@ const API =
   process.env.REACT_APP_API_URL ||
   'http://localhost:3001';
 
+/**
+ * slug: visible en UI
+ * value: slug REAL para backend (subject_slug y /api/:subject/route/blocks)
+ */
 const SUBJECTS = [
-  { slug: 'ed1',                   nombre: 'Estructuras de Datos I' },
-  { slug: 'administracion-servidores', nombre: 'Administración de Servidores' },
-  { slug: 'mineria-datos',         nombre: 'Minería de Datos' },
-  { slug: 'redes',                 nombre: 'Redes' },
-  { slug: 'algoritmia',            nombre: 'Algoritmia' },
-  { slug: 'programacion',          nombre: 'Programación' },
-  { slug: 'ingenieria-software',   nombre: 'Ingeniería de Software' },
-  { slug: 'seguridad-informacion', nombre: 'Seguridad de la Información' },
-  { slug: 'teoria-computacion',    nombre: 'Teoría de la Computación' },
+  { slug: 'ed1',                     nombre: 'Estructuras de Datos I', value: 'ed1' },
+  { slug: 'administracion-servidores', nombre: 'Administración de Servidores', value: 'aserv' },
+  { slug: 'mineria-datos',           nombre: 'Minería de Datos', value: 'mineria' },
+  { slug: 'redes',                   nombre: 'Redes', value: 'redes' },
+  { slug: 'algoritmia',              nombre: 'Algoritmia', value: 'algoritmia' },
+  { slug: 'programacion',            nombre: 'Programación', value: 'programacion' },
+  { slug: 'ingenieria-software',     nombre: 'Ingeniería de Software', value: 'isw' },
+  { slug: 'seguridad-informacion',   nombre: 'Seguridad de la Información', value: 'seguridad' },
+  { slug: 'teoria-computacion',      nombre: 'Teoría de la Computación', value: 'teoria' },
 ];
 
 const LS_SUBJECT = 'lastSubjectSlug';
@@ -51,30 +55,39 @@ export default function SubirApunte() {
   const navigate = useNavigate();
   const token = localStorage.getItem('token');
 
-  // sesión local (tu login propio)
+  // sesión local
   const sesion = useMemo(() => {
     try { return JSON.parse(localStorage.getItem('usuario')); } catch { return null; }
   }, []);
   const autor = sesion?.username || sesion?.tipo || `user-${sesion?.id ?? ''}`;
 
-  // redirige a login si no hay token
   useEffect(() => {
     if (!token) navigate('/login?next=/subir', { replace: true });
   }, [token, navigate]);
 
   // materia
   const storedSubject = localStorage.getItem(LS_SUBJECT) || 'ed1';
-  const [subject, setSubject] = useState(
+  const [subjectSlug, setSubjectSlug] = useState(
     SUBJECTS.some(s => s.slug === storedSubject) ? storedSubject : 'ed1'
   );
-  useEffect(() => { localStorage.setItem(LS_SUBJECT, subject); }, [subject]);
+  const subjectValue = useMemo(
+    () => SUBJECTS.find(s => s.slug === subjectSlug)?.value || 'ed1',
+    [subjectSlug]
+  );
+  useEffect(() => { localStorage.setItem(LS_SUBJECT, subjectSlug); }, [subjectSlug]);
 
-  // campos
+  // form
   const [titulo, setTitulo] = useState('');
   const [descripcion, setDescripcion] = useState('');
   const [tagsInput, setTagsInput] = useState('');
   const tags = useMemo(() => tagsInput.split(',').map(t => t.trim()).filter(Boolean), [tagsInput]);
   const [visibilidad, setVisibilidad] = useState('public');
+
+  // bloques (por nombre)
+  const [blocksLoading, setBlocksLoading] = useState(false);
+  const [blocksErr, setBlocksErr] = useState('');
+  const [blocks, setBlocks] = useState([]); // [{id,title,code,orden}]
+  const [blockId, setBlockId] = useState('');
 
   // archivo
   const [file, setFile] = useState(null);
@@ -87,14 +100,62 @@ export default function SubirApunte() {
   const [subiendo, setSubiendo] = useState(false);
   const [progreso, setProgreso] = useState(0);
 
+  // cargar bloques cuando cambia la materia
+  useEffect(() => {
+    let alive = true;
+    const ctrl = new AbortController();
+
+    (async () => {
+      setBlocksLoading(true);
+      setBlocksErr('');
+      setBlocks([]);
+      setBlockId('');
+      try {
+        const url = `${API}/api/${subjectValue}/route/blocks`;
+        const r = await fetch(url, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          signal: ctrl.signal,
+        });
+
+        if (!r.ok) {
+          if (r.status !== 404) {
+            const j = await r.json().catch(() => ({}));
+            throw new Error(j?.error || `HTTP ${r.status}`);
+          } else {
+            if (alive) setBlocks([]);
+            return;
+          }
+        }
+
+        const raw = await r.json().catch(() => ({}));
+        const list = Array.isArray(raw?.items) ? raw.items
+                  : Array.isArray(raw?.rows)  ? raw.rows
+                  : Array.isArray(raw)        ? raw
+                  : [];
+
+        const norm = list.map((b, i) => ({
+          id: b.id || b.uuid || b.block_id || String(i + 1),
+          title: b.title || b.titulo || b.nombre || b.name || b.block_title || `Bloque ${i + 1}`,
+          code: b.code ?? null,
+          orden: typeof b.orden === 'number' ? b.orden : null,
+        }));
+
+        if (alive) setBlocks(norm);
+      } catch (e) {
+        if (alive) setBlocksErr(e.message || 'No se pudieron cargar los bloques');
+      } finally {
+        if (alive) setBlocksLoading(false);
+      }
+    })();
+
+    return () => { alive = false; ctrl.abort(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subjectValue, token]);
+
   function onPickFile(f) {
     if (!f) return;
-    if (f.size > MAX_MB * 1024 * 1024) {
-      setError(`El archivo supera el límite de ${MAX_MB} MB.`); return;
-    }
-    if (ACCEPT.length && !ACCEPT.includes(f.type)) {
-      if (f.type) { setError('Tipo de archivo no permitido.'); return; }
-    }
+    if (f.size > MAX_MB * 1024 * 1024) { setError(`El archivo supera ${MAX_MB} MB.`); return; }
+    if (ACCEPT.length && f.type && !ACCEPT.includes(f.type)) { setError('Tipo de archivo no permitido.'); return; }
     setError(''); setFile(f);
   }
   const onDrop = (e) => { e.preventDefault(); e.stopPropagation(); setDragOver(false); onPickFile(e.dataTransfer?.files?.[0]); };
@@ -117,23 +178,23 @@ export default function SubirApunte() {
       fd.append('titulo', titulo);
       fd.append('descripcion', descripcion);
       fd.append('autor', autor);
-      fd.append('subject_slug', subject);
+      fd.append('subject_slug', subjectValue);   // slug real
       fd.append('visibilidad', visibilidad);
       fd.append('tags', JSON.stringify(tags));
+      if (blockId) fd.append('block_id', blockId); // del combo
       fd.append('file', file);
 
       const { data } = await axios.post(`${API}/apuntes`, fd, {
         headers: { Authorization: `Bearer ${token}` },
         onUploadProgress: (evt) => {
           if (!evt.total) return;
-          const pct = Math.round((evt.loaded / evt.total) * 100);
-          setProgreso(pct);
+          setProgreso(Math.round((evt.loaded / evt.total) * 100));
         }
       });
 
       setMensaje(`✅ Apunte creado con ID ${data?.id ?? '—'}`);
       setTitulo(''); setDescripcion(''); setTagsInput('');
-      setFile(null); setProgreso(0);
+      setFile(null); setProgreso(0); setBlockId('');
       if (data?.id) setTimeout(() => navigate(`/apunte/${data.id}`), 800);
     } catch (err) {
       setError(`❌ Error: ${err?.response?.data?.error || err.message || 'No se pudo subir el apunte'}`);
@@ -166,13 +227,13 @@ export default function SubirApunte() {
           <div>
             <label className="block mb-1 text-sm font-medium text-slate-700">Materia</label>
             <select
-              value={subject}
-              onChange={(e) => setSubject(e.target.value)}
+              value={subjectSlug}
+              onChange={(e) => setSubjectSlug(e.target.value)}
               className="w-full border rounded-lg px-3 py-2 bg-white"
             >
               {SUBJECTS.map(s => (<option key={s.slug} value={s.slug}>{s.nombre}</option>))}
             </select>
-            <p className="text-xs text-slate-500 mt-1">Se usará para clasificar y recomendar el apunte.</p>
+            <p className="text-xs text-slate-500 mt-1">Se usa <code>{subjectValue}</code> como <em>subject_slug</em>.</p>
           </div>
           <div>
             <label className="block mb-1 text-sm font-medium text-slate-700">Visibilidad</label>
@@ -184,8 +245,32 @@ export default function SubirApunte() {
               <option value="public">Público</option>
               <option value="private">Privado</option>
             </select>
-            <p className="text-xs text-slate-500 mt-1">Si es privado, solo tú podrás verlo.</p>
           </div>
+        </div>
+
+        {/* Bloque por nombre */}
+        <div>
+          <label className="block mb-1 text-sm font-medium text-slate-700">Bloque (opcional)</label>
+          <div className="flex items-center gap-2">
+            <select
+              value={blockId}
+              onChange={(e) => setBlockId(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 bg-white"
+              disabled={blocksLoading || !!blocksErr}
+            >
+              <option value="">— Sin bloque —</option>
+              {blocks.map(b => (
+                <option key={b.id} value={b.id}>
+                  {b.orden != null ? `${b.orden}. ` : ''}{b.title}{b.code ? ` — ${b.code}` : ''}
+                </option>
+              ))}
+            </select>
+            {blocksLoading && <span className="text-xs text-slate-500">Cargando…</span>}
+          </div>
+          {blocksErr && <div className="text-xs text-rose-700 mt-1">Bloques: {blocksErr}</div>}
+          {!blocksLoading && !blocksErr && !blocks.length && (
+            <p className="text-xs text-slate-500 mt-1">No hay bloques publicados para esta materia.</p>
+          )}
         </div>
 
         {/* Título */}
@@ -196,7 +281,7 @@ export default function SubirApunte() {
             value={titulo}
             onChange={(e) => setTitulo(e.target.value)}
             className="w-full border rounded-lg px-3 py-2"
-            placeholder="Ej. ED1 - Árboles y Grafos (resumen)"
+            placeholder="Ej. ED1 — TDA Árbol (ABB, AVL)"
           />
         </div>
 
@@ -315,7 +400,7 @@ export default function SubirApunte() {
       </form>
 
       <div className="text-xs text-slate-500">
-        Nota: el archivo se envía como <code>multipart/form-data</code> a <code>{API}/apuntes</code> con tu token JWT (<code>Authorization: Bearer …</code>).
+        Nota: se envía a <code>{API}/apuntes</code> como <code>multipart/form-data</code> con tu token.
       </div>
     </div>
   );

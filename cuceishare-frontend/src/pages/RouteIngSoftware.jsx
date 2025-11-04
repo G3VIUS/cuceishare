@@ -10,6 +10,7 @@ const API =
 
 const cx = (...xs) => xs.filter(Boolean).join(' ');
 
+/* UI */
 function Stat({ label, value, sub }) {
   return (
     <div className="rounded-2xl border bg-white shadow-sm p-4">
@@ -20,6 +21,7 @@ function Stat({ label, value, sub }) {
   );
 }
 
+/* Catálogos */
 const TIPO_LABEL = {
   apunte: 'Apunte',
   pdf: 'PDF',
@@ -38,15 +40,38 @@ const TIPO_ICON  = {
 };
 const TIPO_ORDER = ['apunte', 'pdf', 'libro', 'web', 'repo', 'documento'];
 
+/* Helpers */
+const safeJSON = (s) => { try { return JSON.parse(s || 'null'); } catch { return null; } };
+const extractKeywords = (s) =>
+  String(s || '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 6)
+    .join(' ');
+const normalizeNotes = (raw) => {
+  const list = Array.isArray(raw?.items) ? raw.items
+            : Array.isArray(raw?.rows)  ? raw.rows
+            : Array.isArray(raw)        ? raw
+            : [];
+  return list.map(n => ({
+    id: n.id ?? n.apunte_id ?? n.slug ?? String(Math.random()).slice(2),
+    titulo: n.titulo ?? n.title ?? 'Apunte',
+    autor: n.autor ?? n.autor_nombre ?? n.user_name ?? n.owner ?? null,
+    url: n.url ?? n.file_url ?? n.link ?? null,
+    created_at: n.creado_en ?? n.created_at ?? n.fecha ?? null,
+  }));
+};
+
 export default function RouteIngSoftware() {
   const navigate = useNavigate();
 
   // Sesión
-  const user = useMemo(() => {
-    try { return JSON.parse(localStorage.getItem('usuario') || 'null'); } catch { return null; }
-  }, []);
+  const user  = useMemo(() => safeJSON(localStorage.getItem('usuario')), []);
   const token = useMemo(() => localStorage.getItem('token') || '', []);
   const isAuthed = !!user && !!token;
+  const HEADERS = useMemo(() => (token ? { Authorization: `Bearer ${token}` } : {}), [token]);
 
   // Estado general
   const [loading, setLoading] = useState(true);
@@ -54,6 +79,7 @@ export default function RouteIngSoftware() {
   const [sessionId, setSessionId] = useState(null);
   const [summary, setSummary] = useState([]); // [{block_id, block_title, total_option, correct_option}]
   const [totals, setTotals] = useState({ total: 0, correct: 0, pct: 0 });
+  const [byDiff, setByDiff] = useState([]);   // opcional si tu API lo envía
 
   // Slide-over de recursos
   const [openBlock, setOpenBlock] = useState(null);
@@ -72,7 +98,7 @@ export default function RouteIngSoftware() {
     if (!isAuthed) navigate('/login', { replace: true });
   }, [isAuthed, navigate]);
 
-  // Cargar resultados / resumen
+  // Cargar resultados / resumen + byDifficulty si existe
   useEffect(() => {
     let alive = true;
     if (!isAuthed) return;
@@ -80,18 +106,35 @@ export default function RouteIngSoftware() {
     (async () => {
       setLoading(true); setErr('');
       try {
-        const headers = { Authorization: `Bearer ${token}` };
-
         const [sumRes, resMe] = await Promise.all([
-          axios.get(`${API}/api/ingsoft/route/summary`, { headers, params: { _t: Date.now() } }),
-          axios.get(`${API}/api/ingsoft/results/me`,    { headers, params: { _t: Date.now() } }),
+          axios.get(`${API}/api/ingsoft/route/summary`, { headers: HEADERS, params: { _t: Date.now() } }),
+          axios.get(`${API}/api/ingsoft/results/me`,    { headers: HEADERS, params: { _t: Date.now() } }),
         ]);
-
         if (!alive) return;
 
-        setSessionId(sumRes.data?.sessionId || resMe.data?.sessionId || null);
-        setSummary(sumRes.data?.blocks || []);
-        setTotals(resMe.data?.totals || { total: 0, correct: 0, pct: 0 });
+        const blocks = Array.isArray(sumRes.data?.blocks) ? sumRes.data.blocks : [];
+        const sess = sumRes.data?.sessionId || resMe.data?.sessionId || null;
+
+        setSessionId(sess);
+        setSummary(blocks);
+
+        const srvTotals = resMe.data?.totals || {};
+        const tServer = Number(srvTotals.total ?? 0);
+        const cServer = Number(srvTotals.correct ?? 0);
+        const pServer = Number.isFinite(Number(srvTotals.pct)) ? Number(srvTotals.pct) : 0;
+
+        // Fallback con bloques si el servidor aún no calcula totals
+        const tBlocks = blocks.reduce((acc, b) => acc + Number(b.total_option || 0), 0);
+        const cBlocks = blocks.reduce((acc, b) => acc + Number(b.correct_option || 0), 0);
+        const pBlocks = tBlocks ? Math.round((cBlocks / tBlocks) * 100) : 0;
+
+        const finalTotals = (tServer === 0 && tBlocks > 0)
+          ? { total: tBlocks, correct: cBlocks, pct: pBlocks }
+          : { total: tServer, correct: cServer, pct: pServer };
+
+        setTotals(finalTotals);
+        setByDiff(Array.isArray(resMe.data?.byDifficulty) ? resMe.data.byDifficulty : []);
+        console.debug('[ISW] blocks:', blocks.length, 'totals:', finalTotals);
       } catch (e) {
         if (!alive) return;
         if (e?.response?.status === 401) { navigate('/login', { replace: true }); return; }
@@ -102,7 +145,7 @@ export default function RouteIngSoftware() {
     })();
 
     return () => { alive = false; };
-  }, [isAuthed, token, navigate]);
+  }, [isAuthed, HEADERS, navigate]);
 
   // Cargar recursos curatoriales + apuntes relacionados por bloque
   useEffect(() => {
@@ -116,23 +159,20 @@ export default function RouteIngSoftware() {
       setNotesLoading(true); setNotesErr(''); setRelatedNotes([]);
 
       try {
-        const headers = { Authorization: `Bearer ${token}` };
-
         // 1) Recursos propios por blockId
         const recReq = axios.get(`${API}/api/ingsoft/route/resources`, {
-          headers,
+          headers: HEADERS,
           params: { blockId: openBlock, _t: Date.now() },
         });
 
-        // 2) Apuntes relacionados (tolerante a tu backend)
-        //    Usa blockId; si tu API aún no filtra por bloque, toma materia=ingsoft y q=título como búsqueda aproximada.
+        // 2) Apuntes relacionados (usar subject_slug correcto: 'isw')
+        const q = extractKeywords(openBlockTitle);
         const notesReq = axios.get(`${API}/apuntes`, {
-          headers,
-          params: { blockId: openBlock, materia: 'ingsoft', q: openBlockTitle, _t: Date.now() },
+          headers: HEADERS,
+          params: { blockId: openBlock, materia: 'isw', q, _t: Date.now() },
         });
 
         const [recRes, notesRes] = await Promise.allSettled([recReq, notesReq]);
-
         if (!alive) return;
 
         // Recursos
@@ -143,25 +183,16 @@ export default function RouteIngSoftware() {
               ? recRes.value.data
               : [];
           setResources(arr);
+          console.debug('[ISW] recursos curatoriales:', arr.length);
         } else {
           setResErr(recRes.reason?.response?.data?.error || 'No se pudieron cargar los recursos');
         }
 
         // Apuntes
         if (notesRes.status === 'fulfilled') {
-          const raw = notesRes.value?.data;
-          const list = Array.isArray(raw?.items) ? raw.items
-                    : Array.isArray(raw?.rows)  ? raw.rows
-                    : Array.isArray(raw)        ? raw
-                    : [];
-          const normalized = list.map(n => ({
-            id: n.id ?? n.apunte_id ?? n.slug ?? String(Math.random()).slice(2),
-            titulo: n.titulo ?? n.title ?? 'Apunte',
-            autor: n.autor ?? n.autor_nombre ?? n.user_name ?? n.owner ?? null,
-            url: n.url ?? n.file_url ?? n.link ?? null,
-            created_at: n.created_at ?? n.fecha ?? null,
-          }));
+          const normalized = normalizeNotes(notesRes.value?.data);
           setRelatedNotes(normalized);
+          console.debug('[ISW] apuntes relacionados →', { q, blockId: openBlock, count: normalized.length });
         } else {
           setNotesErr(notesRes.reason?.response?.data?.error || 'No se pudieron cargar los apuntes');
         }
@@ -171,7 +202,7 @@ export default function RouteIngSoftware() {
     })();
 
     return () => { alive = false; };
-  }, [openBlock, openBlockTitle, token]);
+  }, [openBlock, openBlockTitle, HEADERS]);
 
   // Agrupar recursos por tipo y ordenar
   const groupedResources = useMemo(() => {
@@ -228,7 +259,7 @@ export default function RouteIngSoftware() {
               📊 Ir a la pre-evaluación
             </Link>
             <Link
-              to="/buscar?materia=ingsoft"
+              to="/buscar?materia=isw"
               className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border hover:bg-slate-50 text-slate-800 text-sm shadow-sm"
             >
               🔎 Explorar apuntes
@@ -243,7 +274,7 @@ export default function RouteIngSoftware() {
         {loading && (
           <div className="grid md:grid-cols-3 gap-4">
             {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="rounded-2l border bg-white p-4 animate-pulse">
+              <div key={i} className="rounded-2xl border bg-white p-4 animate-pulse">
                 <div className="h-8 w-24 bg-slate-200 rounded mb-2" />
                 <div className="h-4 w-32 bg-slate-200 rounded" />
               </div>
@@ -278,6 +309,24 @@ export default function RouteIngSoftware() {
               <Stat label="Incorrectas / abiertas" value={incorrect} />
             </section>
 
+            {/* Por dificultad (si viene) */}
+            {!!byDiff?.length && (
+              <section className="rounded-2xl border bg-white shadow-sm p-5">
+                <h2 className="text-lg font-bold mb-3">Desempeño por dificultad</h2>
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {byDiff.map((d, i) => (
+                    <div key={i} className="rounded-xl border p-4">
+                      <div className="text-sm text-slate-500">Dificultad</div>
+                      <div className="text-xl font-extrabold">{d.dificultad ?? 'N/D'}</div>
+                      <div className="text-sm mt-1">
+                        {d.correctas}/{d.total} correctas • {Number(d.porcentaje || 0)}%
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
             {/* Sugerencia si no hay resultados */}
             {!(totals.total > 0) && (
               <div className="rounded-2xl border bg-white shadow-sm p-5">
@@ -293,7 +342,7 @@ export default function RouteIngSoftware() {
                     📊 Empezar pre-evaluación
                   </Link>
                   <Link
-                    to="/buscar?materia=ingsoft"
+                    to="/buscar?materia=isw"
                     className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50"
                   >
                     🔎 Explorar apuntes
@@ -374,7 +423,7 @@ export default function RouteIngSoftware() {
                 📊 Abrir pre-evaluación
               </Link>
               <Link
-                to="/buscar?materia=ingsoft"
+                to="/buscar?materia=isw"
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50"
               >
                 🔎 Buscar apuntes

@@ -1,4 +1,4 @@
-// src/pages/RouteProgramacion.jsx
+// src/pages/RouteMineriaDatos.jsx
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
@@ -8,8 +8,12 @@ const API =
   process.env.REACT_APP_API_URL ||
   'http://localhost:3001';
 
+const SUBJECT_ROUTE = 'mineria-datos'; // para rutas en el frontend
+const SUBJECT_MATERIA = 'mineria';     // parámetro esperado por /apuntes
+
 const cx = (...xs) => xs.filter(Boolean).join(' ');
 
+/* UI */
 function Stat({ label, value, sub }) {
   return (
     <div className="rounded-2xl border bg-white shadow-sm p-4">
@@ -20,36 +24,86 @@ function Stat({ label, value, sub }) {
   );
 }
 
-const TIPO_LABEL = { pdf:'PDF', libro:'Libro', web:'Artículo/Guía', repo:'Repositorio', documento:'Documento' };
-const TIPO_ICON  = { pdf:'📄', libro:'📚', web:'🧭', repo:'📦', documento:'📝' };
-const TIPO_ORDER = ['pdf','libro','web','repo','documento'];
+/* Catálogos */
+const TIPO_LABEL = { pdf: 'PDF', libro: 'Libro', web: 'Artículo/Guía', repo: 'Repositorio', documento: 'Documento' };
+const TIPO_ICON  = { pdf: '📄', libro: '📚', web: '🧭', repo: '📦', documento: '📝' };
+const TIPO_ORDER = ['pdf', 'libro', 'web', 'repo', 'documento'];
 
-export default function RouteProgramacion() {
+/* Helpers */
+const safeJSON = (s) => { try { return JSON.parse(s || 'null'); } catch { return null; } };
+
+const stripAccents = (s='') =>
+  s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+const extractKeywords = (s) => {
+  const base = String(s || '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+
+  // quita stopwords súper comunes para no “ensuciar” la búsqueda
+  const STOP = new Set(['la','el','los','las','de','del','y','en','un','una','para','por','con','1','2','3','4','5','unidad']);
+  const tokens = base.filter(t => !STOP.has(t) && t.length >= 3).slice(0, 6);
+
+  // version sin acentos
+  const tokensNA = tokens.map(stripAccents);
+
+  // Une ambas versiones (dedup)
+  const merged = Array.from(new Set([...tokens, ...tokensNA]));
+  return merged.join(' ');
+};
+
+const normalizeNotes = (raw) => {
+  const list = Array.isArray(raw?.items) ? raw.items
+            : Array.isArray(raw?.rows)  ? raw.rows
+            : Array.isArray(raw)        ? raw
+            : [];
+  return list.map(n => ({
+    id: n.id ?? n.apunte_id ?? n.slug ?? String(Math.random()).slice(2),
+    titulo: n.titulo ?? n.title ?? 'Apunte',
+    autor: n.autor ?? n.autor_nombre ?? n.user_name ?? n.owner ?? null,
+    url: n.url ?? n.file_url ?? n.link ?? null,
+    created_at: n.created_at ?? n.fecha ?? null,
+  }));
+};
+
+export default function RouteMineriaDatos() {
   const navigate = useNavigate();
 
-  const user = useMemo(() => {
-    try { return JSON.parse(localStorage.getItem('usuario') || 'null'); } catch { return null; }
-  }, []);
-  const token = useMemo(() => localStorage.getItem('token') || '', []);
+  // Sesión
+  const user   = useMemo(() => safeJSON(localStorage.getItem('usuario')), []);
+  const token  = useMemo(() => localStorage.getItem('token') || '', []);
   const isAuthed = !!user && !!token;
+  const HEADERS = useMemo(() => (token ? { Authorization: `Bearer ${token}` } : {}), [token]);
 
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState('');
+  // Estado principal
+  const [loading, setLoading]   = useState(true);
+  const [err, setErr]           = useState('');
   const [sessionId, setSessionId] = useState(null);
-  const [summary, setSummary] = useState([]);
-  const [totals, setTotals] = useState({ total: 0, correct: 0, pct: 0 });
-  const [byDiff, setByDiff] = useState([]);
+  const [summary, setSummary]   = useState([]);
+  const [totals, setTotals]     = useState({ total: 0, correct: 0, pct: 0 });
+  const [byDiff, setByDiff]     = useState([]);
 
+  // Slide-over
   const [openBlock, setOpenBlock] = useState(null);
   const [openBlockTitle, setOpenBlockTitle] = useState('');
   const [resLoading, setResLoading] = useState(false);
   const [resErr, setResErr] = useState('');
   const [resources, setResources] = useState([]);
 
+  // Apuntes relacionados (plataforma)
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [notesErr, setNotesErr] = useState('');
+  const [relatedNotes, setRelatedNotes] = useState([]);
+  const [notesScope, setNotesScope] = useState(null); // 'block+q' | 'block' | 'materia'
+
+  // Guard de auth
   useEffect(() => {
     if (!isAuthed) navigate('/login', { replace: true });
   }, [isAuthed, navigate]);
 
+  // ---- Carga principal (summary -> sessionId -> results) ----
   useEffect(() => {
     let alive = true;
     if (!isAuthed) return;
@@ -57,18 +111,38 @@ export default function RouteProgramacion() {
     (async () => {
       setLoading(true); setErr('');
       try {
-        const headers = { Authorization: `Bearer ${token}` };
-
-        const [sumRes, resMe] = await Promise.all([
-          axios.get(`${API}/api/programacion/route/summary`, { headers, params: { _t: Date.now() } }),
-          axios.get(`${API}/api/programacion/results/me`,    { headers, params: { _t: Date.now() } }),
-        ]);
-
+        // 1) summary
+        const sumRes = await axios.get(`${API}/api/mineria/route/summary`, {
+          headers: HEADERS, params: { _t: Date.now() },
+        });
         if (!alive) return;
 
-        setSessionId(sumRes.data?.sessionId || resMe.data?.sessionId || null);
-        setSummary(sumRes.data?.blocks || []);
-        setTotals(resMe.data?.totals || { total: 0, correct: 0, pct: 0 });
+        const blocks = Array.isArray(sumRes.data?.blocks) ? sumRes.data.blocks : [];
+        const sess = sumRes.data?.sessionId || null;
+
+        setSessionId(sess);
+        setSummary(blocks);
+
+        // 2) results (amarrado a esa sesión)
+        const resMe = await axios.get(`${API}/api/mineria/results/me`, {
+          headers: HEADERS, params: { sessionId: sess || undefined, _t: Date.now() },
+        });
+        if (!alive) return;
+
+        const srvTotals = resMe.data?.totals || {};
+        const tServer = Number(srvTotals.total ?? 0);
+        const cServer = Number(srvTotals.correct ?? 0);
+        const pServer = Number.isFinite(Number(srvTotals.pct)) ? Number(srvTotals.pct) : 0;
+
+        const tBlocks = blocks.reduce((acc, b) => acc + Number(b.total_option || 0), 0);
+        const cBlocks = blocks.reduce((acc, b) => acc + Number(b.correct_option || 0), 0);
+        const pBlocks = tBlocks ? Math.round((cBlocks / tBlocks) * 100) : 0;
+
+        const finalTotals = (tServer === 0 && tBlocks > 0)
+          ? { total: tBlocks, correct: cBlocks, pct: pBlocks }
+          : { total: tServer, correct: cServer, pct: pServer };
+
+        setTotals(finalTotals);
         setByDiff(Array.isArray(resMe.data?.byDifficulty) ? resMe.data.byDifficulty : []);
       } catch (e) {
         if (!alive) return;
@@ -80,21 +154,21 @@ export default function RouteProgramacion() {
     })();
 
     return () => { alive = false; };
-  }, [isAuthed, token, navigate]);
+  }, [isAuthed, HEADERS, navigate]);
 
+  // ---- Carga de recursos por bloque ----
   useEffect(() => {
     let alive = true;
     if (!openBlock) return;
     (async () => {
       setResLoading(true); setResErr(''); setResources([]);
       try {
-        const headers = { Authorization: `Bearer ${token}` };
-        const { data } = await axios.get(`${API}/api/programacion/route/resources`, {
-          headers,
-          params: { blockId: openBlock, _t: Date.now() },
+        const { data } = await axios.get(`${API}/api/mineria/route/resources`, {
+          headers: HEADERS, params: { blockId: openBlock, _t: Date.now() },
         });
         if (!alive) return;
-        setResources(Array.isArray(data?.items) ? data.items : []);
+        const arr = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
+        setResources(arr);
       } catch (e) {
         if (!alive) return;
         setResErr(e?.response?.data?.error || 'No se pudieron cargar los recursos');
@@ -103,7 +177,51 @@ export default function RouteProgramacion() {
       }
     })();
     return () => { alive = false; };
-  }, [openBlock, token]);
+  }, [openBlock, HEADERS]);
+
+  // ---- Apuntes relacionados por bloque (con fallbacks) ----
+  useEffect(() => {
+    let alive = true;
+    if (!openBlock) return;
+
+    const fetchNotes = async (params, scopeLabel) => {
+      const { data } = await axios.get(`${API}/apuntes`, { headers: HEADERS, params });
+      if (!alive) return { items: [], scope: scopeLabel };
+      const items = normalizeNotes(data);
+      return { items, scope: scopeLabel };
+    };
+
+    (async () => {
+      setNotesLoading(true); setNotesErr(''); setRelatedNotes([]); setNotesScope(null);
+      try {
+        const qRaw = extractKeywords(openBlockTitle); // incluye versión sin acentos
+        // 1) block + q
+        let res = await fetchNotes({ blockId: openBlock, materia: SUBJECT_MATERIA, q: qRaw, _t: Date.now() }, 'block+q');
+
+        // 2) fallback: solo block (sin q)
+        if (res.items.length === 0) {
+          res = await fetchNotes({ blockId: openBlock, materia: SUBJECT_MATERIA, _t: Date.now() }, 'block');
+        }
+        // 3) fallback: solo materia (sin block ni q)
+        if (res.items.length === 0) {
+          res = await fetchNotes({ materia: SUBJECT_MATERIA, _t: Date.now() }, 'materia');
+        }
+
+        setRelatedNotes(res.items);
+        setNotesScope(res.scope);
+      } catch (e) {
+        if (!alive) return;
+        setNotesErr(e?.response?.data?.error || 'No se pudieron cargar los apuntes');
+      } finally {
+        if (alive) setNotesLoading(false);
+      }
+    })();
+
+    return () => { alive = false; };
+  }, [openBlock, openBlockTitle, HEADERS]);
+
+  // Derivados
+  const incorrect = Math.max(0, (totals.total || 0) - (totals.correct || 0));
 
   const groupedResources = useMemo(() => {
     const g = {};
@@ -127,6 +245,7 @@ export default function RouteProgramacion() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-slate-100">
+      {/* App Bar */}
       <header className="sticky top-0 z-40 border-b bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/60">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
@@ -134,11 +253,11 @@ export default function RouteProgramacion() {
             <div className="truncate">
               <nav className="text-xs text-slate-500" aria-label="Breadcrumb">
                 <ol className="flex items-center gap-1">
-                  <li>Aprendizaje</li><li className="text-slate-400">/</li><li>Programación</li><li className="text-slate-400">/</li><li className="font-medium">Mi ruta</li>
+                  <li>Aprendizaje</li><li className="text-slate-400">/</li><li>Minería de Datos</li><li className="text-slate-400">/</li><li className="font-medium">Mi ruta</li>
                 </ol>
               </nav>
               <h1 className="text-lg md:text-xl font-bold tracking-tight text-slate-900">
-                Ruta de aprendizaje — <span className="text-emerald-700">Programación</span>
+                Ruta de aprendizaje — <span className="text-emerald-700">Minería de Datos</span>
               </h1>
               {user?.id && <p className="text-[11px] text-slate-500">Usuario: <span className="font-mono">#{user.id}</span></p>}
             </div>
@@ -146,27 +265,29 @@ export default function RouteProgramacion() {
 
           <div className="hidden md:flex items-center gap-2">
             <Link
-              to="/pre-eval/programacion"
+              to={`/pre-eval/${SUBJECT_ROUTE}`}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm shadow-sm"
             >📊 Ir a la pre-evaluación</Link>
             <Link
-              to="/buscar?materia=programacion"
+              to={`/buscar?materia=${SUBJECT_ROUTE}`}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border hover:bg-slate-50 text-slate-800 text-sm shadow-sm"
             >🔎 Explorar apuntes</Link>
           </div>
         </div>
       </header>
 
+      {/* Contenido */}
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+        {/* Loading */}
         {loading && (
           <div className="grid md:grid-cols-3 gap-4">
             {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="rounded-2l border bg-white p-4 animate-pulse">
+              <div key={i} className="rounded-2xl border bg-white p-4 animate-pulse">
                 <div className="h-8 w-24 bg-slate-200 rounded mb-2" />
                 <div className="h-4 w-32 bg-slate-200 rounded" />
               </div>
             ))}
-            <div className="rounded-2xl border bg-white p-6 md:col-span-3">
+            <div className="rounded-2xl border bg-white p-6 md:col-span-3 animate-pulse">
               <div className="h-5 w-40 bg-slate-200 rounded mb-3" />
               <div className="h-3 w-full bg-slate-200 rounded mb-2" />
               <div className="h-3 w-4/5 bg-slate-200 rounded mb-2" />
@@ -175,6 +296,7 @@ export default function RouteProgramacion() {
           </div>
         )}
 
+        {/* Error */}
         {err && !loading && (
           <div className="p-4 rounded-xl bg-rose-50 border text-rose-700">
             ⚠️ {err}
@@ -182,15 +304,15 @@ export default function RouteProgramacion() {
           </div>
         )}
 
+        {/* Datos */}
         {!loading && !err && (
           <>
             <section className="grid md:grid-cols-3 gap-4">
               <Stat label="Preguntas respondidas" value={totals.total || 0} />
               <Stat label="Correctas" value={totals.correct || 0} sub={`${totals.pct || 0}%`} />
-              <Stat label="Incorrectas / abiertas" value={Math.max(0, (totals.total || 0) - (totals.correct || 0))} />
+              <Stat label="Incorrectas / abiertas" value={incorrect} />
             </section>
 
-            {/* NUEVO: Desempeño por dificultad */}
             {!!byDiff?.length && (
               <section className="rounded-2xl border bg-white shadow-sm p-5">
                 <h2 className="text-lg font-bold mb-3">Desempeño por dificultad</h2>
@@ -210,15 +332,16 @@ export default function RouteProgramacion() {
 
             {!(totals.total > 0) && (
               <div className="rounded-2xl border bg-white shadow-sm p-5">
-                <div className="text-lg font-bold mb-1">Aún no tienes resultados para Programación</div>
+                <div className="text-lg font-bold mb-1">Aún no tienes resultados para Minería de Datos</div>
                 <p className="text-slate-600 mb-3">Realiza la <span className="font-semibold">pre-evaluación</span> para generar tu ruta de estudio.</p>
                 <div className="flex gap-2">
-                  <Link to="/pre-eval/programacion" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white">📊 Empezar pre-evaluación</Link>
-                  <Link to="/buscar?materia=programacion" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50">🔎 Explorar apuntes</Link>
+                  <Link to={`/pre-eval/${SUBJECT_ROUTE}`} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white">📊 Empezar pre-evaluación</Link>
+                  <Link to={`/buscar?materia=${SUBJECT_ROUTE}`} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50">🔎 Explorar apuntes</Link>
                 </div>
               </div>
             )}
 
+            {/* Bloques */}
             <section className="rounded-2xl border bg-white shadow-sm p-5">
               <div className="flex items-center justify-between gap-3 mb-3">
                 <h2 className="text-lg font-bold">Progreso por bloques</h2>
@@ -245,8 +368,11 @@ export default function RouteProgramacion() {
                           </div>
                           <div className="text-sm text-slate-600">{correct}/{total} correctas</div>
                         </div>
-                        <div className="h-2 rounded bg-slate-200 overflow-hidden">
-                          <div className={cx('h-2 rounded transition-[width] duration-500', pct >= 60 ? 'bg-emerald-600' : 'bg-amber-500')} style={{ width: `${pct}%` }} />
+                        <div className="h-2 rounded bg-slate-200 overflow-hidden" aria-hidden="true">
+                          <div
+                            className={cx('h-2 rounded transition-[width] duration-500', pct >= 60 ? 'bg-emerald-600' : 'bg-amber-500')}
+                            style={{ width: `${pct}%` }}
+                          />
                         </div>
                         <div className="text-[11px] text-slate-500 mt-1">{pct}%</div>
 
@@ -270,16 +396,18 @@ export default function RouteProgramacion() {
             </section>
 
             <section className="flex flex-wrap items-center gap-2">
-              <Link to="/pre-eval/programacion" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white">📊 Abrir pre-evaluación</Link>
-              <Link to="/buscar?materia=programacion" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50">🔎 Buscar apuntes</Link>
+              <Link to={`/pre-eval/${SUBJECT_ROUTE}`} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white">📊 Abrir pre-evaluación</Link>
+              <Link to={`/buscar?materia=${SUBJECT_ROUTE}`} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50">🔎 Buscar apuntes</Link>
               <Link to="/" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50">🏠 Ir al inicio</Link>
             </section>
           </>
         )}
       </main>
 
+      {/* Backdrop del slide-over */}
       {openBlock && <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setOpenBlock(null)} aria-hidden="true" />}
 
+      {/* Slide-over */}
       <aside
         className={cx(
           'fixed right-0 top-0 z-50 h-full w-full max-w-xl bg-white shadow-2xl border-l transform transition-transform',
@@ -288,18 +416,56 @@ export default function RouteProgramacion() {
         role="dialog" aria-modal="true" aria-label="Recursos recomendados"
       >
         <div className="h-full flex flex-col">
+          {/* Header */}
           <div className="px-4 py-3 border-b flex items-center justify-between">
             <div className="min-w-0">
               <h3 className="font-bold truncate">Recursos — {openBlockTitle || 'Bloque'}</h3>
-              <p className="text-xs text-slate-500">Videos excluidos · fuentes en español cuando es posible</p>
+              <p className="text-xs text-slate-500">
+                {notesScope === 'materia' ? 'Mostrando apuntes generales de la materia' :
+                 notesScope === 'block' ? 'Mostrando apuntes del bloque (sin filtro de texto)' :
+                 notesScope === 'block+q' ? 'Mostrando coincidencias del bloque' :
+                 'Videos excluidos · fuentes en español cuando es posible'}
+              </p>
             </div>
             <button onClick={() => setOpenBlock(null)} className="px-3 py-1.5 rounded-lg border bg-white hover:bg-slate-50" aria-label="Cerrar">✕</button>
           </div>
 
+          {/* Contenido */}
           <div className="flex-1 overflow-y-auto p-4">
+            {/* Apuntes (plataforma) */}
+            {notesLoading && <div className="text-slate-600 mb-3">Buscando apuntes…</div>}
+            {notesErr && <div className="p-3 rounded-xl border bg-rose-50 text-rose-800 mb-4">{notesErr}</div>}
+            {!notesLoading && !notesErr && relatedNotes.length > 0 && (
+              <section className="mb-6">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xl">🗒️</span>
+                  <h4 className="font-semibold">Apuntes (plataforma)</h4>
+                </div>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  {relatedNotes.map((n) => (
+                    <article key={n.id} className="rounded-xl border bg-white hover:shadow-sm transition-shadow overflow-hidden p-3">
+                      <div className="font-semibold line-clamp-2" title={n.titulo}>{n.titulo}</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+                        {n.autor && <span className="px-2 py-0.5 rounded-full bg-slate-100">{n.autor}</span>}
+                        <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">Apunte</span>
+                      </div>
+                      {n.url && (
+                        <div className="mt-2">
+                          <a href={n.url} target="_blank" rel="noreferrer" className="rounded-lg border px-2.5 py-1 text-sm hover:bg-slate-50">
+                            📂 Abrir archivo
+                          </a>
+                        </div>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* Recursos curatoriales */}
             {resLoading && <div className="text-slate-600">Cargando recursos…</div>}
             {resErr && <div className="p-3 rounded-xl border bg-rose-50 text-rose-800">{resErr}</div>}
-            {!resLoading && !resErr && resources.length === 0 && (
+            {!resLoading && !resErr && resources.length === 0 && relatedNotes.length === 0 && (
               <div className="rounded-xl border bg-slate-50 text-slate-700 p-4">Aún no hay recursos registrados para este bloque.</div>
             )}
             {!resLoading && !resErr && resources.length > 0 && (
@@ -315,8 +481,12 @@ export default function RouteProgramacion() {
                         <article key={r.id} className="rounded-xl border bg-white hover:shadow-sm transition-shadow overflow-hidden">
                           {r.thumb ? (
                             <a href={r.url} target="_blank" rel="noreferrer" className="block">
-                              <img src={r.thumb} alt="" className="w-full h-32 object-cover"
-                                   onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                              <img
+                                src={r.thumb}
+                                alt=""
+                                className="w-full h-32 object-cover"
+                                onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                              />
                             </a>
                           ) : null}
                           <div className="p-3">
@@ -345,6 +515,7 @@ export default function RouteProgramacion() {
             )}
           </div>
 
+          {/* Footer */}
           <div className="px-4 py-3 border-t">
             <div className="flex justify-end">
               <button onClick={() => setOpenBlock(null)} className="px-3 py-2 rounded-lg border bg-white hover:bg-slate-50">Cerrar</button>

@@ -1,5 +1,5 @@
 // src/pages/RouteAdminServ.jsx
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 
@@ -28,25 +28,21 @@ const TIPO_ORDER = ['pdf', 'libro', 'web', 'repo', 'documento'];
 
 /* Helpers */
 const safeJSON = (s) => { try { return JSON.parse(s || 'null'); } catch { return null; } };
-const extractKeywords = (s) =>
-  String(s || '')
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 6)
-    .join(' ');
+
 const normalizeNotes = (raw) => {
   const list = Array.isArray(raw?.items) ? raw.items
             : Array.isArray(raw?.rows)  ? raw.rows
             : Array.isArray(raw)        ? raw
             : [];
-  return list.map(n => ({
+  // Quitamos sugeridos si vinieran marcados
+  const clean = list.filter(n => (n.suggested ?? n.es_sugerido) !== true);
+  return clean.map(n => ({
     id: n.id ?? n.apunte_id ?? n.slug ?? String(Math.random()).slice(2),
     titulo: n.titulo ?? n.title ?? 'Apunte',
     autor: n.autor ?? n.autor_nombre ?? n.user_name ?? n.owner ?? null,
     url: n.url ?? n.file_url ?? n.link ?? null,
-    created_at: n.created_at ?? n.fecha ?? null,
+    created_at: n.creado_en ?? n.created_at ?? n.fecha ?? null,
+    block_id: n.block_id ?? n.blockId ?? null,
   }));
 };
 
@@ -57,9 +53,9 @@ export default function RouteAdminServ() {
   const user = useMemo(() => safeJSON(localStorage.getItem('usuario')), []);
   const token = useMemo(() => localStorage.getItem('token') || '', []);
   const isAuthed = !!user && !!token;
-  const HEADERS = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
+  const HEADERS = useMemo(() => (token ? { Authorization: `Bearer ${token}` } : {}), [token]);
 
-  // Estado
+  // Estado general
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
   const [sessionId, setSessionId] = useState(null);
@@ -69,22 +65,24 @@ export default function RouteAdminServ() {
 
   // Slide-over recursos
   const [openBlock, setOpenBlock] = useState(null);
+  const [openBlockIndex, setOpenBlockIndex] = useState(null);
   const [openBlockTitle, setOpenBlockTitle] = useState('');
   const [resLoading, setResLoading] = useState(false);
   const [resErr, setResErr] = useState('');
   const [resources, setResources] = useState([]); // excluye videos en backend
 
-  // Apuntes relacionados (solo botón "Abrir archivo")
+  // Apuntes del bloque (únicamente los ligados al bloque; sin sugeridos)
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesErr, setNotesErr] = useState('');
   const [relatedNotes, setRelatedNotes] = useState([]);
+  const notesReqIdRef = useRef(0);
 
-  // Redirección si no hay sesión
+  // Guard de auth
   useEffect(() => {
     if (!isAuthed) navigate('/login', { replace: true });
   }, [isAuthed, navigate]);
 
-  // Carga resultados de la última sesión + fallback de totales desde bloques
+  // Carga resumen/resultados
   useEffect(() => {
     let alive = true;
     if (!isAuthed) return;
@@ -104,13 +102,12 @@ export default function RouteAdminServ() {
         setSessionId(sess);
         setSummary(blocks);
 
-        // Totales del server
+        // Totales del server + fallback por bloques
         const srvTotals = resMe.data?.totals || {};
         const tServer = Number(srvTotals.total ?? 0);
         const cServer = Number(srvTotals.correct ?? 0);
         const pServer = Number.isFinite(Number(srvTotals.pct)) ? Number(srvTotals.pct) : 0;
 
-        // Fallback con bloques
         const tBlocks = blocks.reduce((acc, b) => acc + Number(b.total_option || 0), 0);
         const cBlocks = blocks.reduce((acc, b) => acc + Number(b.correct_option || 0), 0);
         const pBlocks = tBlocks ? Math.round((cBlocks / tBlocks) * 100) : 0;
@@ -133,10 +130,11 @@ export default function RouteAdminServ() {
     return () => { alive = false; };
   }, [isAuthed, HEADERS, navigate]);
 
-  // Abrir slide-over de recursos curatoriales
+  // Recursos curatoriales por bloque
   useEffect(() => {
     let alive = true;
     if (!openBlock) return;
+
     (async () => {
       setResLoading(true); setResErr(''); setResources([]);
       try {
@@ -147,6 +145,7 @@ export default function RouteAdminServ() {
         if (!alive) return;
         const arr = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
         setResources(arr);
+        console.debug('[ASERV] Recursos curatoriales →', arr.length);
       } catch (e) {
         if (!alive) return;
         setResErr(e?.response?.data?.error || 'No se pudieron cargar los recursos');
@@ -154,32 +153,47 @@ export default function RouteAdminServ() {
         if (alive) setResLoading(false);
       }
     })();
+
     return () => { alive = false; };
   }, [openBlock, HEADERS]);
 
-  // Apuntes relacionados por bloque — solo “📂 Abrir archivo”
+  // Apuntes del bloque (tal cual ED1): UNA sola llamada, sin `q`, sólo ligados al blockId
   useEffect(() => {
     let alive = true;
     if (!openBlock) return;
+
+    notesReqIdRef.current += 1;
+    const reqId = notesReqIdRef.current;
+
     (async () => {
       setNotesLoading(true); setNotesErr(''); setRelatedNotes([]);
       try {
-        const q = extractKeywords(openBlockTitle);
-        const { data } = await axios.get(`${API}/apuntes`, {
-          headers: HEADERS,
-          params: { blockId: openBlock, materia: 'aserv', q, _t: Date.now() },
-        });
-        if (!alive) return;
-        setRelatedNotes(normalizeNotes(data));
+        const params = {
+          materia: 'aserv',
+          blockId: openBlock,   // <- filtrado exacto en backend
+          // NO enviamos `q`
+          _t: Date.now(),
+        };
+        const { data } = await axios.get(`${API}/apuntes`, { headers: HEADERS, params });
+        if (!alive || reqId !== notesReqIdRef.current) return;
+
+        const notes = normalizeNotes(data)
+          // Por si el backend regresara más de un bloque, filtramos otra vez
+          .filter(n => !n.suggested && !n.es_sugerido)
+          .filter(n => !n.block_id || String(n.block_id) === String(openBlock));
+
+        setRelatedNotes(notes);
+        console.debug('[ASERV] Apuntes EXACTOS →', { blockId: openBlock, count: notes.length });
       } catch (e) {
-        if (!alive) return;
+        if (!alive || reqId !== notesReqIdRef.current) return;
         setNotesErr(e?.response?.data?.error || 'No se pudieron cargar los apuntes');
       } finally {
-        if (alive) setNotesLoading(false);
+        if (alive && reqId === notesReqIdRef.current) setNotesLoading(false);
       }
     })();
+
     return () => { alive = false; };
-  }, [openBlock, openBlockTitle, HEADERS]);
+  }, [openBlock, HEADERS]);
 
   // Derivados
   const incorrect = Math.max(0, (totals.total || 0) - (totals.correct || 0));
@@ -233,7 +247,7 @@ export default function RouteAdminServ() {
             <Link to="/pre-eval/aserv" className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm shadow-sm">
               📊 Ir a la pre-evaluación
             </Link>
-            <Link to="/buscar" className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border hover:bg-slate-50 text-slate-800 text-sm shadow-sm">
+            <Link to="/buscar?materia=aserv" className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border hover:bg-slate-50 text-slate-800 text-sm shadow-sm">
               🔎 Explorar apuntes
             </Link>
           </div>
@@ -280,7 +294,6 @@ export default function RouteAdminServ() {
               <Stat label="Incorrectas / abiertas" value={incorrect} />
             </section>
 
-            {/* Por dificultad (si viene) */}
             {!!byDiff?.length && (
               <section className="rounded-2xl border bg-white shadow-sm p-5">
                 <h2 className="text-lg font-bold mb-3">Desempeño por dificultad</h2>
@@ -309,14 +322,14 @@ export default function RouteAdminServ() {
                   <Link to="/pre-eval/aserv" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white">
                     📊 Empezar pre-evaluación
                   </Link>
-                  <Link to="/buscar" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50">
+                  <Link to="/buscar?materia=aserv" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50">
                     🔎 Explorar apuntes
                   </Link>
                 </div>
               </div>
             )}
 
-            {/* Por bloques (resumen de ruta) */}
+            {/* Por bloques */}
             <section className="rounded-2xl border bg-white shadow-sm p-5">
               <div className="flex items-center justify-between gap-3 mb-3">
                 <h2 className="text-lg font-bold">Progreso por bloques</h2>
@@ -354,7 +367,6 @@ export default function RouteAdminServ() {
                         </div>
                         <div className="text-[11px] text-slate-500 mt-1">{pct}%</div>
 
-                        {/* Recomendaciones */}
                         <div className="mt-3 text-sm">
                           {pct >= 80 ? (
                             <div className="text-emerald-700">✔️ Bien dominado. Refuerza con prácticas y hardening.</div>
@@ -367,7 +379,11 @@ export default function RouteAdminServ() {
 
                         <div className="mt-3">
                           <button
-                            onClick={() => { setOpenBlock(b.block_id); setOpenBlockTitle(titulo); }}
+                            onClick={() => {
+                              setOpenBlock(b.block_id);
+                              setOpenBlockIndex(i + 1);
+                              setOpenBlockTitle(titulo);
+                            }}
                             className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border hover:bg-slate-50 text-sm"
                           >
                             📚 Ver recursos
@@ -385,7 +401,7 @@ export default function RouteAdminServ() {
               <Link to="/pre-eval/aserv" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white">
                 📊 Abrir pre-evaluación
               </Link>
-              <Link to="/buscar" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50">
+              <Link to="/buscar?materia=aserv" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50">
                 🔎 Buscar apuntes
               </Link>
               <Link to="/" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50">
@@ -425,15 +441,23 @@ export default function RouteAdminServ() {
           </div>
 
           <div className="flex-1 overflow-y-auto p-4">
-            {/* Apuntes (plataforma) */}
-            {notesLoading && <div className="text-slate-600 mb-3">Buscando apuntes…</div>}
-            {notesErr && <div className="p-3 rounded-xl border bg-rose-50 text-rose-800 mb-4">{notesErr}</div>}
-            {!notesLoading && !notesErr && relatedNotes.length > 0 && (
-              <section className="mb-6">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-xl">🗒️</span>
-                  <h4 className="font-semibold">Apuntes (plataforma)</h4>
+            {/* Apuntes del bloque (plataforma) */}
+            <section className="mb-6">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xl">🗒️</span>
+                <h4 className="font-semibold">Apuntes del bloque</h4>
+              </div>
+
+              {notesLoading && <div className="text-slate-600">Buscando apuntes…</div>}
+              {notesErr && <div className="p-3 rounded-xl border bg-rose-50 text-rose-800">{notesErr}</div>}
+
+              {!notesLoading && !notesErr && relatedNotes.length === 0 && (
+                <div className="rounded-xl border bg-slate-50 text-slate-700 p-4">
+                  No hay apuntes vinculados directamente a este bloque.
                 </div>
+              )}
+
+              {!notesLoading && !notesErr && relatedNotes.length > 0 && (
                 <div className="grid sm:grid-cols-2 gap-3">
                   {relatedNotes.map((n) => (
                     <article key={n.id} className="rounded-xl border bg-white hover:shadow-sm transition-shadow overflow-hidden p-3">
@@ -452,19 +476,17 @@ export default function RouteAdminServ() {
                     </article>
                   ))}
                 </div>
-              </section>
-            )}
+              )}
+            </section>
 
             {/* Recursos curatoriales */}
             {resLoading && <div className="text-slate-600">Cargando recursos…</div>}
             {resErr && <div className="p-3 rounded-xl border bg-rose-50 text-rose-800">{resErr}</div>}
-
             {!resLoading && !resErr && resources.length === 0 && relatedNotes.length === 0 && (
               <div className="rounded-xl border bg-slate-50 text-slate-700 p-4">
                 Aún no hay recursos registrados para este bloque.
               </div>
             )}
-
             {!resLoading && !resErr && resources.length > 0 && (
               <div className="space-y-6">
                 {orderedGroups.map((tipo) => (
@@ -486,7 +508,6 @@ export default function RouteAdminServ() {
                               />
                             </a>
                           ) : null}
-
                           <div className="p-3">
                             <div className="flex items-start gap-2">
                               <div className="h-8 w-8 rounded-lg bg-slate-100 grid place-items-center text-lg shrink-0">
@@ -503,19 +524,9 @@ export default function RouteAdminServ() {
                                   {r.title}
                                 </a>
                                 <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
-                                  {r.provider && (
-                                    <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">
-                                      {r.provider}
-                                    </span>
-                                  )}
-                                  <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">
-                                    {TIPO_LABEL[tipo] || 'Recurso'}
-                                  </span>
-                                  {Number.isFinite(r.rank) && (
-                                    <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
-                                      prioridad {r.rank}
-                                    </span>
-                                  )}
+                                  {r.provider && <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700">{r.provider}</span>}
+                                  <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">{TIPO_LABEL[tipo] || 'Recurso'}</span>
+                                  {Number.isFinite(r.rank) && <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">prioridad {r.rank}</span>}
                                 </div>
                               </div>
                             </div>

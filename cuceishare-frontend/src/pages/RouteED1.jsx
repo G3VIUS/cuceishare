@@ -66,7 +66,10 @@ export default function RouteED1() {
   // Apuntes relacionados (plataforma)
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesErr, setNotesErr] = useState('');
-  const [relatedNotes, setRelatedNotes] = useState([]); // [{id,titulo,autor,url,created_at}...]
+  const [relatedNotes, setRelatedNotes] = useState([]); // {id,titulo,autor,url,created_at}
+
+  // Depuración extra de notas
+  const [notesDebug, setNotesDebug] = useState(null);
 
   // Redirección si no hay sesión
   useEffect(() => {
@@ -106,7 +109,7 @@ export default function RouteED1() {
     return () => { alive = false; };
   }, [isAuthed, token, navigate]);
 
-  // Abrir slide-over de recursos + apuntes (versión que te funcionaba)
+  // Abrir slide-over de recursos + apuntes (con debug visible)
   useEffect(() => {
     let alive = true;
     if (!openBlock) return;
@@ -114,6 +117,7 @@ export default function RouteED1() {
     (async () => {
       setResLoading(true); setResErr(''); setResources([]);
       setNotesLoading(true); setNotesErr(''); setRelatedNotes([]);
+      setNotesDebug(null);
 
       try {
         const headers = { Authorization: `Bearer ${token}` };
@@ -124,10 +128,10 @@ export default function RouteED1() {
           params: { blockId: openBlock, _t: Date.now() },
         });
 
-        // 2) Apuntes relacionados (mismo esquema que usabas)
+        // 2) Apuntes relacionados (pedimos debug del backend)
         const notesReq = axios.get(`${API}/apuntes`, {
           headers,
-          params: { blockId: openBlock, materia: 'ed1', q: openBlockTitle, _t: Date.now() },
+          params: { blockId: openBlock, materia: 'ed1', _debug: 1, _t: Date.now() },
         });
 
         const [recRes, notesRes] = await Promise.allSettled([recReq, notesReq]);
@@ -148,17 +152,27 @@ export default function RouteED1() {
         // Apuntes
         if (notesRes.status === 'fulfilled') {
           const raw = notesRes.value?.data;
+          // Guarda el bloque debug para inspección rápida en UI y consola
+          setNotesDebug(raw?.debug || null);
+          console.debug('[RouteED1] /apuntes payload:', raw);
+
           const list = Array.isArray(raw?.items) ? raw.items
                     : Array.isArray(raw?.rows)  ? raw.rows
                     : Array.isArray(raw)        ? raw
                     : [];
+
+          console.debug('[RouteED1] Lista cruda de apuntes:', list);
+
           const normalized = list.map(n => ({
             id: n.id ?? n.apunte_id ?? n.slug ?? String(Math.random()).slice(2),
             titulo: n.titulo ?? n.title ?? 'Apunte',
             autor: n.autor ?? n.autor_nombre ?? n.user_name ?? n.owner ?? null,
+            // Puede venir vacío; luego intentaremos resolverlo con /apuntes/:id/url
             url: n.url ?? n.file_url ?? n.link ?? null,
-            created_at: n.created_at ?? n.fecha ?? null,
+            created_at: n.creado_en ?? n.created_at ?? n.fecha ?? null,
           }));
+
+          console.debug('[RouteED1] Apuntes normalizados:', normalized);
           setRelatedNotes(normalized);
         } else {
           setNotesErr(notesRes.reason?.response?.data?.error || 'No se pudieron cargar los apuntes');
@@ -169,7 +183,31 @@ export default function RouteED1() {
     })();
 
     return () => { alive = false; };
-  }, [openBlock, openBlockTitle, token]);
+  }, [openBlock, token]);
+
+  // Intentar abrir un apunte resolviendo URL (firmada) si no viene en el listado
+  async function openApunte(n) {
+    try {
+      const urlDirecta = n.url;
+      if (urlDirecta) {
+        window.open(urlDirecta, '_blank', 'noopener,noreferrer');
+        return;
+      }
+      const r = await axios.get(`${API}/apuntes/${n.id}/url`, {
+        headers: { Authorization: `Bearer ${token}` },
+        params: { _t: Date.now() },
+      });
+      const finalUrl = r?.data?.url;
+      if (finalUrl) {
+        window.open(finalUrl, '_blank', 'noopener,noreferrer');
+      } else {
+        alert('Este apunte no tiene archivo disponible.');
+      }
+    } catch (e) {
+      console.error('No se pudo abrir el apunte', e);
+      alert('No se pudo abrir el archivo del apunte.');
+    }
+  }
 
   // Derivados
   const incorrect = Math.max(0, (totals.total || 0) - (totals.correct || 0));
@@ -444,38 +482,55 @@ export default function RouteED1() {
 
           {/* Contenido */}
           <div className="flex-1 overflow-y-auto p-4">
-            {/* Apuntes (plataforma) — SOLO Abrir archivo */}
+            {/* Apuntes (plataforma) */}
             {notesLoading && <div className="text-slate-600 mb-3">Buscando apuntes…</div>}
             {notesErr && <div className="p-3 rounded-xl border bg-rose-50 text-rose-800 mb-4">{notesErr}</div>}
-            {!notesLoading && !notesErr && relatedNotes.length > 0 && (
+
+            {!notesLoading && !notesErr && (
               <section className="mb-6">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-xl">{TIPO_ICON.apunte}</span>
                   <h4 className="font-semibold">Apuntes (plataforma)</h4>
+                  <span className="ml-auto text-xs text-slate-500">
+                    {relatedNotes.length} resultado{relatedNotes.length === 1 ? '' : 's'}
+                  </span>
                 </div>
-                <div className="grid sm:grid-cols-2 gap-3">
-                  {relatedNotes.map((n) => (
-                    <article key={n.id} className="rounded-xl border bg-white hover:shadow-sm transition-shadow overflow-hidden p-3">
-                      <div className="font-semibold line-clamp-2" title={n.titulo}>{n.titulo}</div>
-                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
-                        {n.autor && <span className="px-2 py-0.5 rounded-full bg-slate-100">{n.autor}</span>}
-                        <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">Apunte</span>
-                      </div>
-                      {n.url && (
+
+                {relatedNotes.length === 0 ? (
+                  <div className="rounded-xl border bg-slate-50 text-slate-700 p-3">
+                    No hay apuntes para este bloque.
+                  </div>
+                ) : (
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    {relatedNotes.map((n) => (
+                      <article key={n.id} className="rounded-xl border bg-white hover:shadow-sm transition-shadow overflow-hidden p-3">
+                        <div className="font-semibold line-clamp-2" title={n.titulo}>{n.titulo}</div>
+                        <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+                          {n.autor && <span className="px-2 py-0.5 rounded-full bg-slate-100">{n.autor}</span>}
+                          <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">Apunte</span>
+                        </div>
                         <div className="mt-2">
-                          <a
-                            href={n.url}
-                            target="_blank"
-                            rel="noreferrer"
+                          <button
+                            onClick={() => openApunte(n)}
                             className="rounded-lg border px-2.5 py-1 text-sm hover:bg-slate-50"
                           >
                             📂 Abrir archivo
-                          </a>
+                          </button>
                         </div>
-                      )}
-                    </article>
-                  ))}
-                </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+
+                {/* Bloque DEBUG visible para inspección rápida */}
+                {notesDebug && (
+                  <details className="mt-3">
+                    <summary className="text-xs text-slate-500 cursor-pointer">Debug /apuntes</summary>
+                    <pre className="text-[11px] bg-slate-50 border rounded p-2 overflow-auto">
+                      {JSON.stringify(notesDebug, null, 2)}
+                    </pre>
+                  </details>
+                )}
               </section>
             )}
 

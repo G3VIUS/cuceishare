@@ -7,16 +7,19 @@ const API =
   process.env.REACT_APP_API_URL ||
   "http://localhost:3001";
 
-const materiasOpc = [
-  "Estructuras de Datos",
-  "Administración de Servidores",
-  "Bases de Datos",
-  "Sistemas Operativos",
-  "Redes",
-  "Programación Avanzada",
+/** Ajusta los slugs a los reales de tu DB */
+const SUBJECTS = [
+  { name: "Estructuras de Datos I", value: "ed1" },
+  { name: "Administración de Servidores", value: "aserv" },
+  { name: "Minería de Datos", value: "mineria" },
+  { name: "Redes", value: "redes" },
+  { name: "Algoritmia", value: "algoritmia" },
+  { name: "Programación", value: "programacion" },
+  { name: "Ingeniería de Software", value: "isw" },
+  { name: "Seguridad de la Información", value: "seguridad" },
+  { name: "Teoría de la Computación", value: "teoria" },
 ];
 
-// === Config de subida ===
 const ACCEPTED = [
   "application/pdf",
   "application/msword",
@@ -33,14 +36,12 @@ export default function EditApunte() {
   const { id } = useParams();
   const navigate = useNavigate();
 
-  // sesión / headers
   const token = localStorage.getItem("token");
   const authHeader = useMemo(
     () => (token ? { Authorization: `Bearer ${token}` } : {}),
     [token]
   );
 
-  // estado
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -51,16 +52,21 @@ export default function EditApunte() {
     titulo: "",
     descripcion: "",
     subject_slug: "",
+    block_id: "",
     tagsCsv: "",
-    resource_url: "",
-    visibilidad: "public", // 'public' | 'private'
+    visibilidad: "public",
   });
 
   // archivo seleccionado (opcional)
   const [file, setFile] = useState(null);
   const fileInputRef = useRef(null);
 
-  // cargar apunte
+  // bloques (según materia)
+  const [blocksLoading, setBlocksLoading] = useState(false);
+  const [blocksErr, setBlocksErr] = useState("");
+  const [blocks, setBlocks] = useState([]); // [{id, titulo, code, orden}]
+
+  // === Cargar apunte
   useEffect(() => {
     let alive = true;
     const ac = new AbortController();
@@ -88,10 +94,14 @@ export default function EditApunte() {
           titulo: j.titulo ?? "",
           descripcion: j.descripcion ?? "",
           subject_slug: j.subject_slug ?? "",
+          block_id: j.block_id ?? "",
           tagsCsv: tagsArray.join(", "),
-          resource_url: j.resource_url ?? j.file_url ?? "",
           visibilidad: j.visibilidad ?? "public",
         });
+
+        if (j.subject_slug) {
+          fetchBlocks(j.subject_slug, ac.signal, () => alive);
+        }
       } catch (e) {
         if (e.name === "AbortError") return;
         setError(e.message || "No se pudo cargar el apunte");
@@ -104,8 +114,65 @@ export default function EditApunte() {
       alive = false;
       ac.abort();
     };
-    // ❗ No incluyas API en deps: es constante de módulo y causa warning de ESLint
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authHeader, id]);
+
+  // === Cargar bloques al cambiar materia
+  useEffect(() => {
+    if (!form.subject_slug) {
+      setBlocks([]);
+      setForm((prev) => ({ ...prev, block_id: "" }));
+      return;
+    }
+    const ac = new AbortController();
+    let alive = true;
+    fetchBlocks(form.subject_slug, ac.signal, () => alive);
+    return () => {
+      alive = false;
+      ac.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.subject_slug]);
+
+  /** Intenta /blocks y si 404, /api/blocks. Normaliza a {id,titulo,code,orden} */
+  async function fetchBlocks(subjectSlug, signal, isAliveFn = () => true) {
+    const urlA = `${API}/blocks?subject=${encodeURIComponent(subjectSlug)}`;
+    const urlB = `${API}/api/blocks?subject=${encodeURIComponent(subjectSlug)}`;
+    try {
+      setBlocksLoading(true);
+      setBlocksErr("");
+
+      let r = await fetch(urlA, { headers: authHeader, signal });
+      if (r.status === 404) {
+        r = await fetch(urlB, { headers: authHeader, signal });
+      }
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+
+      if (!isAliveFn()) return;
+
+      const raw = Array.isArray(j?.items) ? j.items : Array.isArray(j) ? j : [];
+      const arr = raw.map((b) => ({
+        id: b.id,
+        titulo: b.titulo || b.title || b.code || "Bloque",
+        code: b.code ?? null,
+        orden: Number.isFinite(b.orden) ? b.orden : null,
+      }));
+      arr.sort(
+        (a, b) =>
+          (a.orden ?? 999) - (b.orden ?? 999) ||
+          String(a.titulo || "").localeCompare(String(b.titulo || ""))
+      );
+
+      setBlocks(arr);
+    } catch (e) {
+      if (e.name === "AbortError") return;
+      setBlocksErr(e.message || "No se pudieron cargar los bloques");
+      setBlocks([]);
+    } finally {
+      setBlocksLoading(false);
+    }
+  }
 
   function onChange(e) {
     const { name, value } = e.target;
@@ -129,12 +196,12 @@ export default function EditApunte() {
   }
 
   function validateAndSetFile(f) {
-    if (!ACCEPTED.includes(f.type)) {
-      setError("Tipo de archivo no permitido.");
-      return;
-    }
     if (f.size > MAX_BYTES) {
       setError("El archivo supera 25 MB.");
+      return;
+    }
+    if (ACCEPTED.length && f.type && !ACCEPTED.includes(f.type)) {
+      setError("Tipo de archivo no permitido.");
       return;
     }
     setError("");
@@ -154,13 +221,10 @@ export default function EditApunte() {
     try {
       setSaving(true);
 
-      // Prepara tags como array (jsonb)
       const tags = form.tagsCsv
         ? form.tagsCsv.split(",").map((s) => s.trim()).filter(Boolean)
         : [];
 
-      // Si hay archivo -> usar FormData y PUT multipart
-      // Si no hay archivo -> JSON plano
       let r, j;
 
       if (file) {
@@ -169,13 +233,13 @@ export default function EditApunte() {
         fd.append("titulo", form.titulo);
         fd.append("descripcion", form.descripcion);
         if (form.subject_slug) fd.append("subject_slug", form.subject_slug);
+        if (form.block_id) fd.append("block_id", form.block_id);
         fd.append("visibilidad", form.visibilidad || "public");
         fd.append("tags", JSON.stringify(tags));
-        // Si mandas archivo nuevo, el backend suele anular resource_url
 
         r = await fetch(`${API}/apuntes/${id}`, {
           method: "PUT",
-          headers: authHeader, // ¡NO pongas Content-Type aquí!
+          headers: authHeader, // NO Content-Type manual
           body: fd,
         });
       } else {
@@ -183,9 +247,9 @@ export default function EditApunte() {
           titulo: form.titulo,
           descripcion: form.descripcion,
           subject_slug: form.subject_slug || null,
+          block_id: form.block_id || null,
           visibilidad: form.visibilidad || "public",
           tags,
-          resource_url: form.resource_url || null,
         };
         r = await fetch(`${API}/apuntes/${id}`, {
           method: "PUT",
@@ -198,7 +262,6 @@ export default function EditApunte() {
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
 
       setSaved("Guardado correctamente");
-      // ✅ Navega al perfil al guardar
       navigate("/perfil", { replace: true });
     } catch (e) {
       setError(e.message || "No se pudo guardar");
@@ -208,12 +271,7 @@ export default function EditApunte() {
   }
 
   async function onDelete() {
-    if (
-      !window.confirm(
-        "¿Eliminar este apunte? Esta acción no se puede deshacer."
-      )
-    )
-      return;
+    if (!window.confirm("¿Eliminar este apunte? Esta acción no se puede deshacer.")) return;
     try {
       setDeleting(true);
       const r = await fetch(`${API}/apuntes/${id}`, {
@@ -230,20 +288,49 @@ export default function EditApunte() {
     }
   }
 
+  async function abrirArchivoActual() {
+    try {
+      const r = await fetch(`${API}/apuntes/${id}/url?_t=${Date.now()}`, {
+        headers: authHeader,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
+      if (j?.url) {
+        window.open(j.url, "_blank", "noopener,noreferrer");
+      } else {
+        alert("Este apunte no tiene archivo disponible.");
+      }
+    } catch (e) {
+      alert("No se pudo abrir el archivo.");
+    }
+  }
+
   if (loading) return <div className="p-6">Cargando…</div>;
+
+  // Nombre del bloque actualmente seleccionado (solo display)
+  const currentBlockName =
+    blocks.find((b) => b.id === form.block_id)?.titulo || "";
 
   return (
     <div className="max-w-4xl mx-auto p-4 md:p-6 space-y-5">
-      <h1 className="text-2xl md:text-3xl font-extrabold flex items-center gap-2">
-        <span>✏️</span> Editar Apunte
-      </h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl md:text-3xl font-extrabold flex items-center gap-2">
+          <span>✏️</span> Editar Apunte
+        </h1>
+        <button
+          type="button"
+          onClick={abrirArchivoActual}
+          className="px-3 py-2 rounded-xl border bg-white hover:bg-slate-50 text-sm"
+          title="Abrir archivo actual"
+        >
+          📂 Abrir archivo
+        </button>
+      </div>
 
       {(error || saved) && (
         <div
           className={`p-3 rounded-xl border ${
-            error
-              ? "bg-rose-50 text-rose-800"
-              : "bg-emerald-50 text-emerald-800"
+            error ? "bg-rose-50 text-rose-800" : "bg-emerald-50 text-emerald-800"
           }`}
         >
           {error || saved}
@@ -262,7 +349,7 @@ export default function EditApunte() {
             value={form.titulo}
             onChange={onChange}
             className="w-full px-3 py-2 rounded-lg border"
-            placeholder="Ej. Servicios de red"
+            placeholder="Ej. Árboles binarios de búsqueda"
             required
           />
         </div>
@@ -289,12 +376,15 @@ export default function EditApunte() {
               className="w-full px-3 py-2 rounded-lg border bg-white"
             >
               <option value="">— Selecciona —</option>
-              {materiasOpc.map((m) => (
-                <option key={m} value={m}>
-                  {m}
+              {SUBJECTS.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.name}
                 </option>
               ))}
             </select>
+            <p className="text-xs text-slate-500 mt-1">
+              Se guardará el slug real en <code>subject_slug</code>.
+            </p>
           </div>
 
           <div className="space-y-1">
@@ -311,44 +401,61 @@ export default function EditApunte() {
           </div>
         </div>
 
+        {/* Bloque */}
         <div className="space-y-1">
-          <label className="text-sm font-medium">
-            Etiquetas (separadas por coma)
-          </label>
+          <label className="text-sm font-medium">Bloque (opcional)</label>
+          <div className="grid sm:grid-cols-[1fr_auto] gap-2">
+            <select
+              name="block_id"
+              value={form.block_id || ""}
+              onChange={onChange}
+              className="w-full px-3 py-2 rounded-lg border bg-white"
+              disabled={!form.subject_slug || blocksLoading}
+            >
+              <option value="">{blocksLoading ? "Cargando…" : "— Sin bloque —"}</option>
+              {blocks.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {/* 👇 Mostrar SIEMPRE el nombre completo del bloque */}
+                  {b.titulo}
+                  {Number.isFinite(b.orden) ? ` · #${b.orden}` : ""}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => fetchBlocks(form.subject_slug, undefined, () => true)}
+              className="px-3 py-2 rounded-lg border bg-white hover:bg-slate-50"
+              disabled={!form.subject_slug || blocksLoading}
+              title="Recargar bloques"
+            >
+              🔄
+            </button>
+          </div>
+          {!!currentBlockName && (
+            <div className="text-xs text-slate-600">
+              Seleccionado: <span className="font-medium">{currentBlockName}</span>
+            </div>
+          )}
+          {blocksErr && (
+            <div className="text-xs text-rose-700">⚠️ {blocksErr}</div>
+          )}
+          <p className="text-xs text-slate-500">
+            Se guardará el <code>UUID</code> del bloque en <code>block_id</code>.
+          </p>
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-sm font-medium">Etiquetas (separadas por coma)</label>
           <input
             name="tagsCsv"
             value={form.tagsCsv}
             onChange={onChange}
             className="w-full px-3 py-2 rounded-lg border"
-            placeholder="redes, dns, dhcp"
+            placeholder="árboles, ABB, AVL"
           />
         </div>
 
-        <div className="space-y-1">
-          <label className="text-sm font-medium">
-            URL del recurso (PDF/Drive/GitHub)
-          </label>
-          <input
-            name="resource_url"
-            value={form.resource_url}
-            onChange={onChange}
-            className="w-full px-3 py-2 rounded-lg border"
-            placeholder="https://…/mi_apunte.pdf"
-            disabled={!!file} // si elige archivo, bloquea el campo (opcional)
-          />
-          {form.resource_url && !file && (
-            <a
-              className="text-sm text-indigo-700 underline"
-              href={form.resource_url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Abrir recurso
-            </a>
-          )}
-        </div>
-
-        {/* === Área de archivo (drag & drop) === */}
+        {/* Área de archivo */}
         <div className="grid md:grid-cols-[1fr_220px] gap-4">
           <div
             onDrop={onDrop}
@@ -373,8 +480,7 @@ export default function EditApunte() {
               className="hidden"
             />
             <div className="mt-3 text-xs text-slate-500">
-              Formatos aceptados: PDF, DOC/DOCX, PPT/PPTX, PNG, JPG, TXT.
-              Límite 25 MB.
+              Formatos aceptados: PDF, DOC/DOCX, PPT/PPTX, PNG, JPG, TXT. Límite 25 MB.
             </div>
 
             {file && (
@@ -400,8 +506,6 @@ export default function EditApunte() {
             <ul className="list-disc pl-4 space-y-1 text-slate-700">
               <li>Prefiere PDF para mayor compatibilidad.</li>
               <li>Describe el contenido y agrega etiquetas.</li>
-              <li>Si es tuyo, incluye portada o nombre.</li>
-              <li>También puedes compartir solo el enlace.</li>
             </ul>
           </aside>
         </div>

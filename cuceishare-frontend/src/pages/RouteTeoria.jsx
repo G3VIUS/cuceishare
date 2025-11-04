@@ -28,14 +28,6 @@ const TIPO_ORDER = ['pdf','libro','web','repo','documento'];
 
 /* Helpers */
 const safeJSON = (s) => { try { return JSON.parse(s || 'null'); } catch { return null; } };
-const extractKeywords = (s) =>
-  String(s || '')
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 6)
-    .join(' ');
 const normalizeNotes = (raw) => {
   const list = Array.isArray(raw?.items) ? raw.items
             : Array.isArray(raw?.rows)  ? raw.rows
@@ -46,7 +38,7 @@ const normalizeNotes = (raw) => {
     titulo: n.titulo ?? n.title ?? 'Apunte',
     autor: n.autor ?? n.autor_nombre ?? n.user_name ?? n.owner ?? null,
     url: n.url ?? n.file_url ?? n.link ?? null,
-    created_at: n.created_at ?? n.fecha ?? null,
+    created_at: n.creado_en ?? n.created_at ?? n.fecha ?? null,
   }));
 };
 
@@ -57,7 +49,7 @@ export default function RouteTeoria() {
   const user  = useMemo(() => safeJSON(localStorage.getItem('usuario')), []);
   const token = useMemo(() => localStorage.getItem('token') || '', []);
   const isAuthed = !!user && !!token;
-  const HEADERS = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
+  const HEADERS = useMemo(() => (token ? { Authorization: `Bearer ${token}` } : {}), [token]);
 
   // Estado
   const [loading, setLoading] = useState(true);
@@ -157,20 +149,20 @@ export default function RouteTeoria() {
     return () => { alive = false; };
   }, [openBlock, HEADERS]);
 
-  // Apuntes relacionados por bloque — solo “📂 Abrir archivo”
+  // Apuntes vinculados por bloque — SIN sugeridos (no enviar `q`)
   useEffect(() => {
     let alive = true;
     if (!openBlock) return;
     (async () => {
       setNotesLoading(true); setNotesErr(''); setRelatedNotes([]);
       try {
-        const q = extractKeywords(openBlockTitle);
         const { data } = await axios.get(`${API}/apuntes`, {
           headers: HEADERS,
-          params: { blockId: openBlock, materia: 'teoria', q, _t: Date.now() },
+          params: { blockId: openBlock, materia: 'teoria', _t: Date.now() },
         });
         if (!alive) return;
         setRelatedNotes(normalizeNotes(data));
+        console.debug('[TEO] apuntes vinculados →', { blockId: openBlock, count: Array.isArray(data?.items ?? data) ? (data.items?.length ?? data.length) : 0 });
       } catch (e) {
         if (!alive) return;
         setNotesErr(e?.response?.data?.error || 'No se pudieron cargar los apuntes');
@@ -179,7 +171,7 @@ export default function RouteTeoria() {
       }
     })();
     return () => { alive = false; };
-  }, [openBlock, openBlockTitle, HEADERS]);
+  }, [openBlock, HEADERS]);
 
   // Derivados
   const incorrect = Math.max(0, (totals.total || 0) - (totals.correct || 0));
@@ -242,12 +234,12 @@ export default function RouteTeoria() {
         {loading && (
           <div className="grid md:grid-cols-3 gap-4">
             {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="rounded-2l border bg-white p-4 animate-pulse">
+              <div key={i} className="rounded-2xl border bg-white p-4 animate-pulse">
                 <div className="h-8 w-24 bg-slate-200 rounded mb-2" />
                 <div className="h-4 w-32 bg-slate-200 rounded" />
               </div>
             ))}
-            <div className="rounded-2xl border bg-white p-6 md:col-span-3">
+            <div className="rounded-2xl border bg-white p-6 md:col-span-3 animate-pulse">
               <div className="h-5 w-40 bg-slate-200 rounded mb-3" />
               <div className="h-3 w-full bg-slate-200 rounded mb-2" />
               <div className="h-3 w-4/5 bg-slate-200 rounded mb-2" />
@@ -379,15 +371,21 @@ export default function RouteTeoria() {
           </div>
 
           <div className="flex-1 overflow-y-auto p-4">
-            {/* Apuntes (plataforma) */}
-            {notesLoading && <div className="text-slate-600 mb-3">Buscando apuntes…</div>}
-            {notesErr && <div className="p-3 rounded-xl border bg-rose-50 text-rose-800 mb-4">{notesErr}</div>}
-            {!notesLoading && !notesErr && relatedNotes.length > 0 && (
-              <section className="mb-6">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-xl">🗒️</span>
-                  <h4 className="font-semibold">Apuntes (plataforma)</h4>
+            {/* Apuntes del bloque (plataforma) */}
+            <section className="mb-6">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xl">🗒️</span>
+                <h4 className="font-semibold">Apuntes del bloque</h4>
+              </div>
+
+              {notesLoading && <div className="text-slate-600 mb-2">Buscando apuntes…</div>}
+              {notesErr && <div className="p-3 rounded-xl border bg-rose-50 text-rose-800 mb-2">{notesErr}</div>}
+              {!notesLoading && !notesErr && relatedNotes.length === 0 && (
+                <div className="rounded-xl border bg-slate-50 text-slate-700 p-3">
+                  No hay apuntes vinculados directamente a este bloque.
                 </div>
+              )}
+              {!notesLoading && !notesErr && relatedNotes.length > 0 && (
                 <div className="grid sm:grid-cols-2 gap-3">
                   {relatedNotes.map((n) => (
                     <article key={n.id} className="rounded-xl border bg-white hover:shadow-sm transition-shadow overflow-hidden p-3">
@@ -406,8 +404,8 @@ export default function RouteTeoria() {
                     </article>
                   ))}
                 </div>
-              </section>
-            )}
+              )}
+            </section>
 
             {/* Recursos curatoriales */}
             {resLoading && <div className="text-slate-600">Cargando recursos…</div>}

@@ -59,9 +59,15 @@ app.use(express.urlencoded({ extended: true }));
 // Estáticos
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// Silenciar favicon para evitar 404 ruidosos
+app.get('/favicon.ico', (_req, res) => res.status(204).end());
+
 /* =======================
    Rutas
    ======================= */
+
+// Routers
+const blocksRouter = require('./routes/blocks');
 
 // Apuntes
 app.use('/apuntes', require('./routes/apuntes'));
@@ -80,13 +86,12 @@ app.use('/api/programacion',  require('./routes/route-programacion')); // Progra
 app.use('/api/ingsoft',       require('./routes/route-ingsoft'));      // Ingeniería de Software
 app.use('/api/seginf',        require('./routes/route-seginf'));
 
+// Admin
 app.use('/admin/apuntes',     require('./routes/admin-apuntes'));
 app.use('/admin/contenido',   require('./routes/admin-contenido'));
 
-// ---- Stub opcional para evitar errores del frontend si aún llama /api/ask ----
-app.post('/api/ask', (_req, res) => {
-  return res.status(503).json({ error: 'Asistente de IA deshabilitado en el servidor.' });
-});
+// Blocks: exponemos rutas tanto en /api/* como en sus alias "planos"
+app.use(blocksRouter);
 
 /* =======================
    Healthcheck y raíz
