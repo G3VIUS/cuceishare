@@ -7,31 +7,80 @@ const API =
   process.env.REACT_APP_API_URL ||
   "http://localhost:3001";
 
-/* ===== Helpers ===== */
+/* ================= Helpers ================= */
 
-// Paleta por materia
-const materiaColor = (m) => {
-  if (!m) return "bg-slate-100 text-slate-700";
-  const key = String(m).toLowerCase();
-  if (key.includes("estructuras")) return "bg-violet-100 text-violet-700";
-  if (key.includes("servidores") || key.includes("aserv"))
-    return "bg-emerald-100 text-emerald-700";
-  if (key.includes("minería") || key.includes("mineria") || key.includes("datos"))
-    return "bg-cyan-100 text-cyan-700";
-  if (key.includes("redes")) return "bg-indigo-100 text-indigo-700";
-  if (key.includes("algoritmia") || key.includes("sistemas"))
-    return "bg-amber-100 text-amber-700";
-  if (key.includes("ing") && key.includes("software"))
-    return "bg-rose-100 text-rose-700";
-  if (key.includes("seguridad") || key.includes("seginf"))
-    return "bg-fuchsia-100 text-fuchsia-700";
-  return "bg-slate-100 text-slate-700";
+// Aliases de materias: frontend/urls -> slug esperado por el backend
+const MATERIA_ALIAS = {
+  // Minería
+  "mineria-datos": "mineria",
+  "mineria": "mineria",
+
+  // Ingeniería de Software
+  "ingsoft": "isw",
+  "ingenieria-software": "isw",
+  "isw": "isw",
+
+  // Estructuras de Datos I
+  "ed1": "ed1",
+  "estructuras-de-datos-i": "ed1",
+  "estructuras": "ed1",
+
+  // Administración de Servidores
+  "administracion-servidores": "aserv",
+  "aserv": "aserv",
+
+  // Otras materias comunes
+  "redes": "redes",
+  "algoritmia": "algoritmia",
+  "seginf": "seginf",
+  "seguridad-informacion": "seginf",
+  "teoria": "teoria",
+  "teoria-de-la-computacion": "teoria",
+  "programacion": "programacion",
+};
+
+const MATERIAS_CATALOG = [
+  { value: "ed1",          label: "Estructuras de Datos I" },
+  { value: "aserv",        label: "Administración de Servidores" },
+  { value: "mineria",      label: "Minería de Datos" },
+  { value: "redes",        label: "Redes" },
+  { value: "algoritmia",   label: "Algoritmia" },
+  { value: "isw",          label: "Ingeniería de Software" },
+  { value: "seginf",       label: "Seguridad de la Información" },
+  { value: "teoria",       label: "Teoría de la Computación" },
+  { value: "programacion", label: "Programación" },
+];
+
+const materiaLabel = (slug) =>
+  MATERIAS_CATALOG.find((m) => m.value === slug)?.label || slug;
+
+const normalizeMateria = (m) => {
+  if (!m) return "";
+  const k = String(m).toLowerCase().trim();
+  return MATERIA_ALIAS[k] || k;
+};
+
+// Clase de color por slug canónico
+const materiaColor = (slug) => {
+  const s = normalizeMateria(slug);
+  switch (s) {
+    case "ed1":           return "bg-violet-100 text-violet-700";
+    case "aserv":         return "bg-emerald-100 text-emerald-700";
+    case "mineria":       return "bg-cyan-100 text-cyan-700";
+    case "redes":         return "bg-indigo-100 text-indigo-700";
+    case "algoritmia":    return "bg-amber-100 text-amber-700";
+    case "isw":           return "bg-rose-100 text-rose-700";
+    case "seginf":        return "bg-fuchsia-100 text-fuchsia-700";
+    case "teoria":        return "bg-blue-100 text-blue-700";
+    case "programacion":  return "bg-sky-100 text-sky-700";
+    default:              return "bg-slate-100 text-slate-700";
+  }
 };
 
 // Fecha amigable
 const fmtFecha = (s) => (s ? new Date(s).toLocaleDateString() : "");
 
-// Resalta coincidencias
+// Resalta coincidencias simples
 function Highlight({ text, query }) {
   if (!query) return <>{text}</>;
   const q = query.trim().toLowerCase();
@@ -52,12 +101,7 @@ function Highlight({ text, query }) {
 
 const cx = (...xs) => xs.filter(Boolean).join(" ");
 const Skeleton = ({ className = "" }) => (
-  <div
-    className={cx(
-      "animate-pulse bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200 rounded-2xl",
-      className
-    )}
-  />
+  <div className={cx("animate-pulse bg-slate-200 rounded-2xl", className)} />
 );
 
 /* ===== Mini design system ===== */
@@ -78,35 +122,50 @@ const inputClass =
 const selectClass =
   "w-full px-3 py-2 rounded-2xl border bg-white outline-none focus:ring-2 focus:ring-indigo-400 shadow-sm";
 
-/* ===== Componente ===== */
+/* ==== clave compartida para búsquedas recientes (UNA sola vez) ==== */
+const RECENT_KEY = "buscar:recientes";
+
+/* ================= Componente ================= */
 
 export default function Buscar() {
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Estado — SIEMPRE sin filtros al iniciar
-  const [q, setQ] = useState(() => searchParams.get("q") || "");
-  const [materia, setMateria] = useState("");   // ← vacío
-  const [semestre, setSemestre] = useState(""); // ← vacío
-  const [tag, setTag] = useState("");           // ← vacío
-  const [orden, setOrden] = useState("recientes");
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  // Token opcional (si el backend lo requiere para /apuntes)
+  const token = useMemo(() => localStorage.getItem("token") || "", []);
+  const HEADERS = useMemo(
+    () => (token ? { Authorization: `Bearer ${token}` } : {}),
+    [token]
+  );
 
-  // Limpia params de materia/semestre/tag si llegan en la URL
+  // Estado — inicializa desde la URL (conserva filtros entrantes)
+  const [q, setQ] = useState(() => searchParams.get("q") || "");
+  const [materia, setMateria] = useState(() => normalizeMateria(searchParams.get("materia") || ""));
+  const [tag, setTag] = useState(() => searchParams.get("tag") || "");
+  const [orden, setOrden] = useState(() => searchParams.get("orden") || "recientes");
+  const [page, setPage] = useState(() => Number(searchParams.get("page") || 1));
+  const [pageSize, setPageSize] = useState(() => Number(searchParams.get("pageSize") || 10));
+
+  // Si cambian los searchParams (navegación atrás/adelante), sincroniza estado
   useEffect(() => {
-    const hasAny =
-      searchParams.has("materia") ||
-      searchParams.has("semestre") ||
-      searchParams.has("tag");
-    if (hasAny) {
-      const next = new URLSearchParams(searchParams);
-      next.delete("materia");
-      next.delete("semestre");
-      next.delete("tag");
-      setSearchParams(next, { replace: true });
-    }
+    const qp = searchParams.get("q") || "";
+    if (qp !== q) setQ(qp);
+
+    const m = normalizeMateria(searchParams.get("materia") || "");
+    if (m !== materia) setMateria(m);
+
+    const t = searchParams.get("tag") || "";
+    if (t !== tag) setTag(t);
+
+    const o = searchParams.get("orden") || "recientes";
+    if (o !== orden) setOrden(o);
+
+    const p = Number(searchParams.get("page") || 1);
+    if (p !== page) setPage(p);
+
+    const ps = Number(searchParams.get("pageSize") || 10);
+    if (ps !== pageSize) setPageSize(ps);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [searchParams]);
 
   // Datos
   const [items, setItems] = useState([]);
@@ -114,7 +173,6 @@ export default function Buscar() {
   const [err, setErr] = useState("");
 
   // Búsquedas recientes
-  const RECENT_KEY = "buscar:recientes";
   const recientes = useMemo(() => {
     try {
       const arr = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]");
@@ -124,20 +182,19 @@ export default function Buscar() {
     }
   }, []);
 
-  // Sincroniza URL con el estado actual
+  // Sincroniza URL con el estado actual (slugs normalizados)
   useEffect(() => {
     const next = new URLSearchParams();
     if (q.trim()) next.set("q", q.trim());
-    if (materia) next.set("materia", materia);
-    if (semestre) next.set("semestre", semestre);
+    if (materia) next.set("materia", normalizeMateria(materia));
     if (tag) next.set("tag", tag);
     if (orden && orden !== "recientes") next.set("orden", orden);
     if (page && page !== 1) next.set("page", String(page));
     if (pageSize && pageSize !== 10) next.set("pageSize", String(pageSize));
-    setSearchParams(next);
-  }, [q, materia, semestre, tag, orden, page, pageSize, setSearchParams]);
+    setSearchParams(next, { replace: true });
+  }, [q, materia, tag, orden, page, pageSize, setSearchParams]);
 
-  // Fetch con debounce
+  // Fetch con debounce (pasa materia normalizada al backend)
   useEffect(() => {
     let alive = true;
     const ctrl = new AbortController();
@@ -148,18 +205,16 @@ export default function Buscar() {
       try {
         const params = new URLSearchParams();
         if (q.trim()) params.set("q", q.trim());
-        if (materia) params.set("materia", materia);
-        if (semestre) params.set("semestre", semestre);
+        if (materia) params.set("materia", normalizeMateria(materia));
         if (tag) params.set("tag", tag);
         params.set("_t", String(Date.now()));
 
-        const url = `${API}/apuntes${
-          params.toString() ? `?${params.toString()}` : ""
-        }`;
-        const r = await fetch(url, { signal: ctrl.signal });
+        const url = `${API}/apuntes${params.toString() ? `?${params.toString()}` : ""}`;
+        const r = await fetch(url, { signal: ctrl.signal, headers: HEADERS });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`);
-        const arr = Array.isArray(j) ? j : j.apuntes || j.items || [];
+
+        const arr = Array.isArray(j) ? j : j.apuntes || j.items || j.rows || [];
         if (!alive) return;
         setItems(Array.isArray(arr) ? arr : []);
       } catch (e) {
@@ -175,28 +230,28 @@ export default function Buscar() {
       ctrl.abort();
       clearTimeout(t);
     };
-  }, [q, materia, semestre, tag]);
+  }, [q, materia, tag, HEADERS]);
 
-  // Facetas
-  const materias = useMemo(() => {
+  // Facetas (materias: catálogo fijo + las detectadas en resultados)
+  const materiasFromItems = useMemo(() => {
     const set = new Set();
     items.forEach((a) => {
-      const m = a.materia || a.subject || a.materia_nombre || a.subject_name;
-      if (m) set.add(String(m));
+      const raw =
+        a.subject_slug || a.materia_slug ||
+        a.materia || a.subject || a.materia_nombre || a.subject_name || "";
+      const slug = normalizeMateria(raw);
+      if (slug) set.add(slug);
     });
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
+    return Array.from(set);
   }, [items]);
 
-  const semestres = useMemo(() => {
-    const set = new Set();
-    items.forEach((a) => {
-      const s = a.semestre || a.semester;
-      if (s) set.add(String(s));
-    });
-    return Array.from(set).sort((a, b) =>
-      String(a).localeCompare(String(b), undefined, { numeric: true })
-    );
-  }, [items]);
+  const materiasSelect = useMemo(() => {
+    const base = [...MATERIAS_CATALOG.map((m) => m.value)];
+    const merged = Array.from(new Set([...base, ...materiasFromItems]));
+    return merged
+      .map((v) => ({ value: v, label: materiaLabel(v) }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [materiasFromItems]);
 
   const tagsUniverse = useMemo(() => {
     const set = new Set();
@@ -215,6 +270,7 @@ export default function Buscar() {
   // Filtrado/orden/paginación cliente
   const filteredAll = useMemo(() => {
     let arr = items.slice();
+
     const ql = q.trim().toLowerCase();
     if (ql) {
       arr = arr.filter((a) => {
@@ -232,18 +288,16 @@ export default function Buscar() {
         );
       });
     }
+
     if (materia) {
       arr = arr.filter((a) => {
-        const m =
+        const raw =
+          a.subject_slug || a.materia_slug ||
           a.materia || a.subject || a.materia_nombre || a.subject_name || "";
-        return String(m).toLowerCase() === String(materia).toLowerCase();
+        return normalizeMateria(raw) === normalizeMateria(materia);
       });
     }
-    if (semestre) {
-      arr = arr.filter(
-        (a) => String(a.semestre || a.semester || "") === String(semestre)
-      );
-    }
+
     if (tag) {
       arr = arr.filter((a) => {
         const t = Array.isArray(a.etiquetas || a.tags)
@@ -254,6 +308,7 @@ export default function Buscar() {
         return t.map((x) => x.toLowerCase()).includes(String(tag).toLowerCase());
       });
     }
+
     arr.sort((a, b) => {
       const fa = a.created_at || a.creado_en || a.fecha || a.updated_at || "";
       const fb = b.created_at || b.creado_en || b.fecha || b.updated_at || "";
@@ -265,8 +320,9 @@ export default function Buscar() {
         );
       return 0;
     });
+
     return arr;
-  }, [items, q, materia, semestre, tag, orden]);
+  }, [items, q, materia, tag, orden]);
 
   // Paginación
   const total = filteredAll.length;
@@ -278,7 +334,7 @@ export default function Buscar() {
     return filteredAll.slice(start, start + pageSize);
   }, [filteredAll, pageSafe, pageSize]);
 
-  // Búsquedas recientes
+  // Guardar búsqueda (usa la constante RECENT_KEY declarada arriba)
   const guardarBusqueda = useCallback((term) => {
     const t = String(term || "").trim();
     if (!t) return;
@@ -298,7 +354,6 @@ export default function Buscar() {
   const clearAll = () => {
     setQ("");
     setMateria("");
-    setSemestre("");
     setTag("");
     setOrden("recientes");
     setPage(1);
@@ -310,6 +365,8 @@ export default function Buscar() {
     setPage(1);
   };
 
+  /* ================== Render ================== */
+
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-6 space-y-5">
       <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -318,7 +375,7 @@ export default function Buscar() {
             Buscar apuntes
           </h1>
           <p className="text-slate-500 text-sm mt-1">
-            Filtra por materia, semestre y etiquetas. Pulsa{" "}
+            Filtra por materia y etiquetas. Pulsa{" "}
             <kbd className="px-1 py-0.5 border rounded-lg bg-slate-50 text-[11px]">
               Enter
             </kbd>{" "}
@@ -326,6 +383,7 @@ export default function Buscar() {
           </p>
         </div>
 
+        {/* Toolbar derecha: Orden + Limpiar */}
         <div className="flex items-center gap-2">
           <label className="text-sm text-slate-500">Orden:</label>
           <select
@@ -340,15 +398,15 @@ export default function Buscar() {
             <option value="antiguos">Más antiguos</option>
             <option value="tituloAZ">Título A–Z</option>
           </select>
+          <button onClick={clearAll} className={btn}>
+            Limpiar filtros
+          </button>
         </div>
       </div>
 
-      {/* Barra de búsqueda + filtros */}
-      <form
-        onSubmit={onSubmit}
-        className="grid grid-cols-1 md:grid-cols-12 gap-2 md:gap-3"
-      >
-        <div className="md:col-span-6">
+      {/* Barra de búsqueda + filtros (sin semestre ni blockId) */}
+      <form onSubmit={onSubmit} className="grid grid-cols-1 md:grid-cols-12 gap-2 md:gap-3">
+        <div className="md:col-span-7">
           <input
             className={inputClass}
             placeholder="Busca por título, autor o descripción…"
@@ -378,39 +436,20 @@ export default function Buscar() {
           )}
         </div>
 
-        <div className="md:col-span-2">
+        <div className="md:col-span-3">
           <select
             className={selectClass}
             value={materia}
             onChange={(e) => {
-              setMateria(e.target.value);
+              setMateria(normalizeMateria(e.target.value));
               setPage(1);
             }}
             aria-label="Filtrar por materia"
           >
             <option value="">Todas las materias</option>
-            {materias.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="md:col-span-2">
-          <select
-            className={selectClass}
-            value={semestre}
-            onChange={(e) => {
-              setSemestre(e.target.value);
-              setPage(1);
-            }}
-            aria-label="Filtrar por semestre"
-          >
-            <option value="">Todos los semestres</option>
-            {semestres.map((s) => (
-              <option key={s} value={s}>
-                {s}
+            {materiasSelect.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.label}
               </option>
             ))}
           </select>
@@ -436,8 +475,8 @@ export default function Buscar() {
         </div>
       </form>
 
-      {/* Chips activos */}
-      {(q || materia || semestre || tag) && (
+      {/* Chips activos (sin semestre ni blockId) */}
+      {(q || materia || tag) && (
         <div className="flex items-center gap-2 flex-wrap text-sm">
           <span className="text-slate-500">Filtros:</span>
           {q && (
@@ -447,12 +486,7 @@ export default function Buscar() {
           )}
           {materia && (
             <button onClick={() => setMateria("")} className={btn}>
-              materia: {materia} ×
-            </button>
-          )}
-          {semestre && (
-            <button onClick={() => setSemestre("")} className={btn}>
-              semestre: {semestre} ×
+              materia: {materiaLabel(materia)} ×
             </button>
           )}
           {tag && (
@@ -460,9 +494,6 @@ export default function Buscar() {
               tag: #{tag} ×
             </button>
           )}
-          <button onClick={clearAll} className={btnPrimary}>
-            Limpiar todo
-          </button>
         </div>
       )}
 
@@ -478,16 +509,14 @@ export default function Buscar() {
           ⚠️ {err}
           <div className="mt-2">
             <button
-              onClick={() => {
-                setQ((q) => q + "");
-              }}
+              onClick={() => setQ((v) => v + "")}
               className={btnGhost}
             >
               Reintentar
             </button>
           </div>
         </div>
-      ) : total === 0 ? (
+      ) : filteredAll.length === 0 ? (
         <div className="rounded-3xl border bg-white p-8 text-center shadow-sm">
           <div className="text-3xl mb-2">🧐</div>
           <div className="font-semibold">Sin resultados</div>
@@ -500,7 +529,7 @@ export default function Buscar() {
           {/* Controles de página */}
           <div className="flex items-center justify-between text-sm text-slate-600">
             <div className="px-2 py-1 rounded-full bg-slate-50 border text-slate-700">
-              Mostrando <b>{(pageSafe - 1) * pageSize + 1}</b>–<b>{Math.min(pageSafe * pageSize, total)}</b> de <b>{total}</b>
+              Mostrando <b>{(pageSafe - 1) * pageSize + 1}</b>–<b>{Math.min(pageSafe * pageSize, filteredAll.length)}</b> de <b>{filteredAll.length}</b>
             </div>
             <div className="flex items-center gap-2">
               <label>Por página:</label>
@@ -527,11 +556,11 @@ export default function Buscar() {
                   ‹ Anterior
                 </button>
                 <span className="px-2 py-1 rounded-full bg-white border shadow-sm">
-                  {pageSafe} / {totalPages}
+                  {pageSafe} / {Math.max(1, Math.ceil(filteredAll.length / pageSize))}
                 </span>
                 <button
-                  disabled={pageSafe >= totalPages}
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={pageSafe >= Math.max(1, Math.ceil(filteredAll.length / pageSize))}
+                  onClick={() => setPage((p) => Math.min(Math.max(1, Math.ceil(filteredAll.length / pageSize)), p + 1))}
                   className={cx(btn, "disabled:opacity-50")}
                 >
                   Siguiente ›
@@ -545,9 +574,12 @@ export default function Buscar() {
               const id = a.id;
               const title = a.titulo || a.title || `Apunte #${id}`;
               const autor = a.autor || a.user || a.usuario || "desconocido";
-              const materiaN =
+              const mraw =
+                a.subject_slug || a.materia_slug ||
                 a.materia || a.subject || a.materia_nombre || a.subject_name || "";
-              const semestreN = a.semestre || a.semester || "";
+              const mslug = normalizeMateria(mraw);
+              const mlabel = materiaLabel(mslug);
+              const semestreN = a.semestre || a.semester || ""; // solo mostrar, ya no filtra
               const tags = Array.isArray(a.etiquetas || a.tags)
                 ? a.etiquetas || a.tags
                 : String(a.etiquetas || a.tags || "")
@@ -572,13 +604,9 @@ export default function Buscar() {
                           <h3 className="font-semibold text-slate-900 truncate">
                             <Highlight text={title} query={q} />
                           </h3>
-                          {materiaN && (
-                            <span
-                              className={`text-xs px-2.5 py-0.5 rounded-full ${materiaColor(
-                                materiaN
-                              )}`}
-                            >
-                              {materiaN}
+                          {mslug && (
+                            <span className={`text-xs px-2.5 py-0.5 rounded-full ${materiaColor(mslug)}`}>
+                              {mlabel}
                             </span>
                           )}
                           {semestreN && (

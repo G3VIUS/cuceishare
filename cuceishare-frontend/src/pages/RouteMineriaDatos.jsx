@@ -1,5 +1,5 @@
 // src/pages/RouteMineriaDatos.jsx
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 
@@ -42,16 +42,14 @@ const extractKeywords = (s) => {
     .split(/\s+/)
     .filter(Boolean);
 
-  // quita stopwords súper comunes para no “ensuciar” la búsqueda
+  // stopwords muy comunes para no ensuciar el q
   const STOP = new Set(['la','el','los','las','de','del','y','en','un','una','para','por','con','1','2','3','4','5','unidad']);
   const tokens = base.filter(t => !STOP.has(t) && t.length >= 3).slice(0, 6);
 
-  // version sin acentos
+  // duplicamos versión sin acentos (para backends que no normalizan)
   const tokensNA = tokens.map(stripAccents);
 
-  // Une ambas versiones (dedup)
-  const merged = Array.from(new Set([...tokens, ...tokensNA]));
-  return merged.join(' ');
+  return Array.from(new Set([...tokens, ...tokensNA])).join(' ');
 };
 
 const normalizeNotes = (raw) => {
@@ -96,7 +94,8 @@ export default function RouteMineriaDatos() {
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesErr, setNotesErr] = useState('');
   const [relatedNotes, setRelatedNotes] = useState([]);
-  const [notesScope, setNotesScope] = useState(null); // 'block+q' | 'block' | 'materia'
+  const [notesScope, setNotesScope] = useState(null); // 'block+q' | 'block'
+  const notesReqId = useRef(0); // evita condiciones de carrera
 
   // Guard de auth
   useEffect(() => {
@@ -179,14 +178,25 @@ export default function RouteMineriaDatos() {
     return () => { alive = false; };
   }, [openBlock, HEADERS]);
 
-  // ---- Apuntes relacionados por bloque (con fallbacks) ----
+  // Limpia apuntes al cerrar el slide-over (evita “fantasmas”)
+  useEffect(() => {
+    if (!openBlock) {
+      setRelatedNotes([]);
+      setNotesScope(null);
+      setNotesErr('');
+    }
+  }, [openBlock]);
+
+  // ---- Apuntes relacionados por bloque (MODO ESTRICTO: sin fallback por materia) ----
   useEffect(() => {
     let alive = true;
     if (!openBlock) return;
 
+    const myReq = ++notesReqId.current;        // id de esta solicitud
+    const blockAtStart = openBlock;            // bloque con el que empezó
+
     const fetchNotes = async (params, scopeLabel) => {
       const { data } = await axios.get(`${API}/apuntes`, { headers: HEADERS, params });
-      if (!alive) return { items: [], scope: scopeLabel };
       const items = normalizeNotes(data);
       return { items, scope: scopeLabel };
     };
@@ -194,26 +204,35 @@ export default function RouteMineriaDatos() {
     (async () => {
       setNotesLoading(true); setNotesErr(''); setRelatedNotes([]); setNotesScope(null);
       try {
-        const qRaw = extractKeywords(openBlockTitle); // incluye versión sin acentos
-        // 1) block + q
-        let res = await fetchNotes({ blockId: openBlock, materia: SUBJECT_MATERIA, q: qRaw, _t: Date.now() }, 'block+q');
+        const qRaw = extractKeywords(openBlockTitle);
 
-        // 2) fallback: solo block (sin q)
-        if (res.items.length === 0) {
-          res = await fetchNotes({ blockId: openBlock, materia: SUBJECT_MATERIA, _t: Date.now() }, 'block');
+        let res = { items: [], scope: null };
+
+        // 1) block + q (solo si hay q)
+        if (qRaw) {
+          res = await fetchNotes({ blockId: blockAtStart, materia: SUBJECT_MATERIA, q: qRaw, _t: Date.now() }, 'block+q');
         }
-        // 3) fallback: solo materia (sin block ni q)
+
+        // 2) fallback mínimo: solo block (sin q)
         if (res.items.length === 0) {
-          res = await fetchNotes({ materia: SUBJECT_MATERIA, _t: Date.now() }, 'materia');
+          res = await fetchNotes({ blockId: blockAtStart, materia: SUBJECT_MATERIA, _t: Date.now() }, 'block');
         }
+
+        // ⛔️ SIN fallback por "materia": así evitamos que un apunte general se repita en varios bloques
+
+        // Evita escribir si cambió el bloque o llegó otra respuesta después
+        if (!alive) return;
+        if (notesReqId.current !== myReq) return;
+        if (openBlock !== blockAtStart) return;
 
         setRelatedNotes(res.items);
         setNotesScope(res.scope);
       } catch (e) {
         if (!alive) return;
+        if (notesReqId.current !== myReq) return;
         setNotesErr(e?.response?.data?.error || 'No se pudieron cargar los apuntes');
       } finally {
-        if (alive) setNotesLoading(false);
+        if (alive && notesReqId.current === myReq) setNotesLoading(false);
       }
     })();
 
@@ -421,9 +440,8 @@ export default function RouteMineriaDatos() {
             <div className="min-w-0">
               <h3 className="font-bold truncate">Recursos — {openBlockTitle || 'Bloque'}</h3>
               <p className="text-xs text-slate-500">
-                {notesScope === 'materia' ? 'Mostrando apuntes generales de la materia' :
-                 notesScope === 'block' ? 'Mostrando apuntes del bloque (sin filtro de texto)' :
-                 notesScope === 'block+q' ? 'Mostrando coincidencias del bloque' :
+                {notesScope === 'block' ? 'Apuntes asociados al bloque' :
+                 notesScope === 'block+q' ? 'Coincidencias del bloque' :
                  'Videos excluidos · fuentes en español cuando es posible'}
               </p>
             </div>
@@ -462,14 +480,26 @@ export default function RouteMineriaDatos() {
               </section>
             )}
 
-            {/* Recursos curatoriales */}
-            {resLoading && <div className="text-slate-600">Cargando recursos…</div>}
-            {resErr && <div className="p-3 rounded-xl border bg-rose-50 text-rose-800">{resErr}</div>}
-            {!resLoading && !resErr && resources.length === 0 && relatedNotes.length === 0 && (
-              <div className="rounded-xl border bg-slate-50 text-slate-700 p-4">Aún no hay recursos registrados para este bloque.</div>
+            {/* Mensaje si no hay apuntes del bloque */}
+            {!notesLoading && !notesErr && relatedNotes.length === 0 && (
+              <div className="rounded-xl border bg-slate-50 text-slate-700 p-4">
+                No hay apuntes asociados a este bloque.
+                <div className="mt-3">
+                  <Link
+                    to={`/buscar?materia=${SUBJECT_ROUTE}&q=${encodeURIComponent(openBlockTitle || '')}`}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border hover:bg-slate-100 text-sm"
+                  >
+                    🔎 Ver apuntes de la materia
+                  </Link>
+                </div>
+              </div>
             )}
+
+            {/* Recursos curatoriales */}
+            {resLoading && <div className="text-slate-600 mt-4">Cargando recursos…</div>}
+            {resErr && <div className="p-3 rounded-xl border bg-rose-50 text-rose-800 mt-4">{resErr}</div>}
             {!resLoading && !resErr && resources.length > 0 && (
-              <div className="space-y-6">
+              <div className="space-y-6 mt-6">
                 {orderedGroups.map((tipo) => (
                   <section key={tipo}>
                     <div className="flex items-center gap-2 mb-2">

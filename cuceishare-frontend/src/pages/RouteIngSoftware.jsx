@@ -1,5 +1,5 @@
 // src/pages/RouteIngSoftware.jsx
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 
@@ -7,6 +7,9 @@ const API =
   (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_URL) ||
   process.env.REACT_APP_API_URL ||
   'http://localhost:3001';
+
+const SUBJECT_ROUTE = 'ingsoft'; // slug de rutas (pre-eval)
+const SUBJECT_MATERIA = 'isw';   // parámetro esperado por /apuntes
 
 const cx = (...xs) => xs.filter(Boolean).join(' ');
 
@@ -42,14 +45,22 @@ const TIPO_ORDER = ['apunte', 'pdf', 'libro', 'web', 'repo', 'documento'];
 
 /* Helpers */
 const safeJSON = (s) => { try { return JSON.parse(s || 'null'); } catch { return null; } };
-const extractKeywords = (s) =>
-  String(s || '')
+
+const stripAccents = (s='') => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+const extractKeywords = (s) => {
+  const base = String(s || '')
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 6)
-    .join(' ');
+    .filter(Boolean);
+
+  const STOP = new Set(['la','el','los','las','de','del','y','en','un','una','para','por','con','1','2','3','4','5','unidad']);
+  const tokens = base.filter(t => !STOP.has(t) && t.length >= 3).slice(0, 6);
+  const tokensNA = tokens.map(stripAccents);
+  return Array.from(new Set([...tokens, ...tokensNA])).join(' ');
+};
+
 const normalizeNotes = (raw) => {
   const list = Array.isArray(raw?.items) ? raw.items
             : Array.isArray(raw?.rows)  ? raw.rows
@@ -92,6 +103,8 @@ export default function RouteIngSoftware() {
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesErr, setNotesErr] = useState('');
   const [relatedNotes, setRelatedNotes] = useState([]); // [{id,titulo,autor,url,created_at}...]
+  const [notesScope, setNotesScope] = useState(null);   // 'block+q' | 'block'
+  const notesReqId = useRef(0); // anti-race: evita que resultados antiguos reescriban
 
   // Redirección si no hay sesión
   useEffect(() => {
@@ -147,57 +160,81 @@ export default function RouteIngSoftware() {
     return () => { alive = false; };
   }, [isAuthed, HEADERS, navigate]);
 
-  // Cargar recursos curatoriales + apuntes relacionados por bloque
+  // Cargar recursos curatoriales (por bloque)
   useEffect(() => {
     let alive = true;
     if (!openBlock) return;
 
     (async () => {
-      // Recursos curatoriales
       setResLoading(true); setResErr(''); setResources([]);
-      // Apuntes de la plataforma
-      setNotesLoading(true); setNotesErr(''); setRelatedNotes([]);
-
       try {
-        // 1) Recursos propios por blockId
-        const recReq = axios.get(`${API}/api/ingsoft/route/resources`, {
+        const { data } = await axios.get(`${API}/api/ingsoft/route/resources`, {
           headers: HEADERS,
           params: { blockId: openBlock, _t: Date.now() },
         });
-
-        // 2) Apuntes relacionados (usar subject_slug correcto: 'isw')
-        const q = extractKeywords(openBlockTitle);
-        const notesReq = axios.get(`${API}/apuntes`, {
-          headers: HEADERS,
-          params: { blockId: openBlock, materia: 'isw', q, _t: Date.now() },
-        });
-
-        const [recRes, notesRes] = await Promise.allSettled([recReq, notesReq]);
         if (!alive) return;
-
-        // Recursos
-        if (recRes.status === 'fulfilled') {
-          const arr = Array.isArray(recRes.value?.data?.items)
-            ? recRes.value.data.items
-            : Array.isArray(recRes.value?.data)
-              ? recRes.value.data
-              : [];
-          setResources(arr);
-          console.debug('[ISW] recursos curatoriales:', arr.length);
-        } else {
-          setResErr(recRes.reason?.response?.data?.error || 'No se pudieron cargar los recursos');
-        }
-
-        // Apuntes
-        if (notesRes.status === 'fulfilled') {
-          const normalized = normalizeNotes(notesRes.value?.data);
-          setRelatedNotes(normalized);
-          console.debug('[ISW] apuntes relacionados →', { q, blockId: openBlock, count: normalized.length });
-        } else {
-          setNotesErr(notesRes.reason?.response?.data?.error || 'No se pudieron cargar los apuntes');
-        }
+        const arr = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
+        setResources(arr);
+        console.debug('[ISW] recursos curatoriales:', arr.length);
+      } catch (e) {
+        if (!alive) return;
+        setResErr(e?.response?.data?.error || 'No se pudieron cargar los recursos');
       } finally {
-        if (alive) { setResLoading(false); setNotesLoading(false); }
+        if (alive) setResLoading(false);
+      }
+    })();
+
+    return () => { alive = false; };
+  }, [openBlock, HEADERS]);
+
+  // Limpia apuntes al cerrar el slide-over
+  useEffect(() => {
+    if (!openBlock) {
+      setRelatedNotes([]);
+      setNotesScope(null);
+      setNotesErr('');
+    }
+  }, [openBlock]);
+
+  // Apuntes relacionados (modo estricto: block+q -> block; sin materia global)
+  useEffect(() => {
+    let alive = true;
+    if (!openBlock) return;
+
+    const myReq = ++notesReqId.current;
+    const blockAtStart = openBlock;
+
+    const fetchNotes = async (params, scopeLabel) => {
+      const { data } = await axios.get(`${API}/apuntes`, { headers: HEADERS, params });
+      return { items: normalizeNotes(data), scope: scopeLabel };
+    };
+
+    (async () => {
+      setNotesLoading(true); setNotesErr(''); setRelatedNotes([]); setNotesScope(null);
+      try {
+        const q = extractKeywords(openBlockTitle);
+        let res = { items: [], scope: null };
+
+        if (q) {
+          res = await fetchNotes({ blockId: blockAtStart, materia: SUBJECT_MATERIA, q, _t: Date.now() }, 'block+q');
+        }
+        if (res.items.length === 0) {
+          res = await fetchNotes({ blockId: blockAtStart, materia: SUBJECT_MATERIA, _t: Date.now() }, 'block');
+        }
+
+        if (!alive) return;
+        if (notesReqId.current !== myReq) return;
+        if (openBlock !== blockAtStart) return;
+
+        setRelatedNotes(res.items);
+        setNotesScope(res.scope);
+        console.debug('[ISW] apuntes relacionados →', { scope: res.scope, count: res.items.length, blockId: blockAtStart });
+      } catch (e) {
+        if (!alive) return;
+        if (notesReqId.current !== myReq) return;
+        setNotesErr(e?.response?.data?.error || 'No se pudieron cargar los apuntes');
+      } finally {
+        if (alive && notesReqId.current === myReq) setNotesLoading(false);
       }
     })();
 
@@ -253,13 +290,13 @@ export default function RouteIngSoftware() {
 
           <div className="hidden md:flex items-center gap-2">
             <Link
-              to="/pre-eval/ingsoft"
+              to={`/pre-eval/${SUBJECT_ROUTE}`}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm shadow-sm"
             >
               📊 Ir a la pre-evaluación
             </Link>
             <Link
-              to="/buscar?materia=isw"
+              to={`/buscar?materia=${SUBJECT_MATERIA}`}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white border hover:bg-slate-50 text-slate-800 text-sm shadow-sm"
             >
               🔎 Explorar apuntes
@@ -336,13 +373,13 @@ export default function RouteIngSoftware() {
                 </p>
                 <div className="flex gap-2">
                   <Link
-                    to="/pre-eval/ingsoft"
+                    to={`/pre-eval/${SUBJECT_ROUTE}`}
                     className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white"
                   >
                     📊 Empezar pre-evaluación
                   </Link>
                   <Link
-                    to="/buscar?materia=isw"
+                    to={`/buscar?materia=${SUBJECT_MATERIA}`}
                     className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50"
                   >
                     🔎 Explorar apuntes
@@ -417,13 +454,13 @@ export default function RouteIngSoftware() {
             {/* Acciones finales */}
             <section className="flex flex-wrap items-center gap-2">
               <Link
-                to="/pre-eval/ingsoft"
+                to={`/pre-eval/${SUBJECT_ROUTE}`}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white"
               >
                 📊 Abrir pre-evaluación
               </Link>
               <Link
-                to="/buscar?materia=isw"
+                to={`/buscar?materia=${SUBJECT_MATERIA}`}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border hover:bg-slate-50"
               >
                 🔎 Buscar apuntes
@@ -463,7 +500,11 @@ export default function RouteIngSoftware() {
           <div className="px-4 py-3 border-b flex items-center justify-between">
             <div className="min-w-0">
               <h3 className="font-bold truncate">Recursos — {openBlockTitle || 'Bloque'}</h3>
-              <p className="text-xs text-slate-500">Videos excluidos · fuentes en español cuando es posible</p>
+              <p className="text-xs text-slate-500">
+                {notesScope === 'block' ? 'Apuntes asociados al bloque' :
+                 notesScope === 'block+q' ? 'Coincidencias del bloque' :
+                 'Videos excluidos · fuentes en español cuando es posible'}
+              </p>
             </div>
             <button
               onClick={() => setOpenBlock(null)}
@@ -518,6 +559,21 @@ export default function RouteIngSoftware() {
                   ))}
                 </div>
               </section>
+            )}
+
+            {/* Mensaje si no hay apuntes del bloque */}
+            {!notesLoading && !notesErr && relatedNotes.length === 0 && (
+              <div className="rounded-xl border bg-slate-50 text-slate-700 p-4">
+                No hay apuntes asociados a este bloque.
+                <div className="mt-3">
+                  <Link
+                    to={`/buscar?materia=${SUBJECT_MATERIA}&q=${encodeURIComponent(openBlockTitle || '')}`}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border hover:bg-slate-100 text-sm"
+                  >
+                    🔎 Ver apuntes de la materia
+                  </Link>
+                </div>
+              </div>
             )}
 
             {/* Recursos curatoriales */}
