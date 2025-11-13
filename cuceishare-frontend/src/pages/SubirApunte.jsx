@@ -400,7 +400,6 @@ export default function SubirApunte() {
       </form>
 
       <div className="text-xs text-slate-500">
-        Nota: se envía a <code>{API}/apuntes</code> como <code>multipart/form-data</code> con tu token.
       </div>
     </div>
   );

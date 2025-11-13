@@ -1,7 +1,8 @@
+// src/Navbar.js
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import logo from './logo.png'; // 👈 aquí va tu logo (copia LOGO TRANS.png como logo.png)
 
-/* ===== Materias (alineadas con Home) ===== */
 const SUBJECTS = [
   { slug: 'ed1',            nombre: 'Estructuras de Datos I',  routeSlug: 'ed1',            preSlug: 'ed1' },
   { slug: 'aserv',          nombre: 'Administración de Servidores', routeSlug: 'aserv',     preSlug: 'aserv' },
@@ -25,17 +26,14 @@ export default function Navbar() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
 
-  // Sesión — SOLO token = sesión válida
   const token = localStorage.getItem('token');
   const legacyUser = safeParse(localStorage.getItem('usuario'));
   const isAuthed = Boolean(token);
 
-  // Limpia usuario “huérfano” si no hay token
   useEffect(() => {
     if (!token && legacyUser) localStorage.removeItem('usuario');
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Materia seleccionada (URL -> LS -> fallback)
   const initialSubject = useMemo(() => {
     const parts = pathname.split('/').filter(Boolean);
     const codeFromUrl = ['pre-eval', 'ruta', 'content', 'practice'].includes(parts[0]) ? parts[1] : null;
@@ -59,20 +57,16 @@ export default function Navbar() {
     if (found && found.slug !== subject) setSubject(found.slug);
   }, [pathname, subject]);
 
-  // Estado UI móvil
   const [mobileOpen, setMobileOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
 
-  // Bloqueo scroll cuando abre el sheet
   useEffect(() => {
     document.body.style.overflow = mobileOpen ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
   }, [mobileOpen]);
 
-  // Cerrar en cambio de ruta
   useEffect(() => { setMobileOpen(false); setUserOpen(false); }, [pathname]);
 
-  // Cerrar con Escape y click afuera del dropdown
   useEffect(() => {
     const onKey = (e) => e.key === 'Escape' && (setMobileOpen(false), setUserOpen(false));
     const onClick = (e) => {
@@ -84,13 +78,11 @@ export default function Navbar() {
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('click', onClick); };
   }, []);
 
-  // Navegación ligada a materia
   const go = (to) => () => { setMobileOpen(false); setUserOpen(false); navigate(to); };
   const goPreEval = go(`/pre-eval/${pSlug}`);
   const goRuta    = go(`/ruta/${rSlug}`);
   const goBuscar  = go(`/buscar?materia=${rSlug}`);
 
-  // Seguridad en “Subir” y “Perfil”
   const goSubir   = () => { setMobileOpen(false); setUserOpen(false); navigate(isAuthed ? '/subir'  : '/login'); };
   const goPerfil  = () => { setMobileOpen(false); setUserOpen(false); navigate(isAuthed ? '/perfil' : '/login'); };
 
@@ -105,7 +97,6 @@ export default function Navbar() {
     navigate('/login');
   };
 
-  // Estilos
   const btn  = "px-3 h-11 md:h-9 inline-flex items-center justify-center rounded-lg border text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300";
   const cta  = "px-3 h-11 md:h-9 inline-flex items-center justify-center rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-black focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400";
   const pill = "px-3 h-10 md:h-8 rounded-full border bg-white text-sm";
@@ -116,7 +107,6 @@ export default function Navbar() {
 
   return (
     <header className="sticky top-0 z-50 bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/65 border-b pt-[env(safe-area-inset-top)]">
-      {/* Skip link */}
       <a href="#main" className="sr-only focus:not-sr-only absolute left-2 top-2 bg-white border px-3 py-1 rounded-md">
         Saltar al contenido
       </a>
@@ -124,9 +114,16 @@ export default function Navbar() {
       <nav className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 h-16 md:h-16 grid grid-cols-[auto_1fr_auto] items-center gap-3">
         {/* Marca + selector */}
         <div className="flex items-center gap-3 min-w-0">
-          {/* Logo a un solo color */}
-          <Link to="/" className="text-[16px] sm:text-base font-black tracking-tight text-slate-900">
-            CUCEIShare
+          {/* Logo + texto */}
+          <Link to="/" className="flex items-center gap-2">
+            <img
+              src={logo}
+              alt="CUCEIShare"
+              className="h-7 w-auto"
+            />
+            <span className="text-[16px] sm:text-base font-black tracking-tight text-slate-900">
+              CUCEIShare
+            </span>
           </Link>
 
           {/* Selector materia (md+) */}
@@ -161,12 +158,10 @@ export default function Navbar() {
 
         {/* Lado derecho */}
         <div className="flex items-center gap-2 justify-self-end">
-          {/* Subir / Login (seguro) */}
           <button onClick={goSubir} className="hidden md:inline-flex px-3 h-9 rounded-lg border text-sm font-medium hover:bg-slate-50">
             {isAuthed ? 'Subir' : 'Iniciar sesión'}
           </button>
 
-          {/* Perfil seguro (siempre disponible) */}
           <button
             onClick={goPerfil}
             aria-label="Perfil"
@@ -176,7 +171,6 @@ export default function Navbar() {
             {isAuthed ? (legacyUser?.nombre?.[0] || '👤') : '👤'}
           </button>
 
-          {/* Hamburguesa (móvil) */}
           <button
             aria-label="Abrir menú"
             aria-expanded={mobileOpen}
@@ -190,7 +184,7 @@ export default function Navbar() {
         </div>
       </nav>
 
-      {/* Menú móvil: sheet accesible */}
+      {/* Menú móvil */}
       <div
         className={cx(
           "md:hidden transition-[max-height] duration-300 overflow-hidden border-t bg-white shadow",
@@ -198,7 +192,6 @@ export default function Navbar() {
         )}
       >
         <div className="px-3 sm:px-4 py-3 space-y-4">
-          {/* Selector materia */}
           <div>
             <label className="block text-xs text-slate-500 mb-1">Materia</label>
             <select
@@ -211,7 +204,6 @@ export default function Navbar() {
             </select>
           </div>
 
-          {/* Acciones principales */}
           <div className="grid grid-cols-2 gap-2">
             <button onClick={goPreEval} className={cx("min-h-12 rounded-lg border px-3 text-[15px] font-medium", isPre && "bg-slate-50 border-slate-300")}>
               Pre-evaluación
@@ -224,7 +216,6 @@ export default function Navbar() {
             </button>
           </div>
 
-          {/* Subir / Perfil / Sesión (seguro) */}
           <div className="grid grid-cols-2 gap-2">
             <button onClick={goSubir} className="rounded-lg border px-3 h-11 text-[15px] font-medium">
               {isAuthed ? 'Subir apunte' : 'Iniciar sesión'}
@@ -234,7 +225,6 @@ export default function Navbar() {
             </button>
           </div>
 
-          {/* Logout si aplica */}
           {isAuthed ? (
             <div className="pt-1">
               <button onClick={handleLogout} className="text-sm text-rose-700">Cerrar sesión</button>
@@ -247,7 +237,6 @@ export default function Navbar() {
             </div>
           )}
 
-          {/* Safe-area bottom padding en iOS */}
           <div className="pb-[env(safe-area-inset-bottom)]" />
         </div>
       </div>
