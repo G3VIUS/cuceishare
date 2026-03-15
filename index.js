@@ -49,7 +49,7 @@ app.use(cors({
     return cb(new Error('Not allowed by CORS'));
   },
   credentials: true,
-  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 }));
 
 // Parsers
@@ -72,26 +72,32 @@ const blocksRouter = require('./routes/blocks');
 // Apuntes
 app.use('/apuntes', require('./routes/apuntes'));
 
+// Clasificación IA (tabla separada apuntes_clasificaciones)
+app.use('/apuntes/:id/clasificacion', require('./routes/clasificacion'));
+
 // Auth
 app.use('/auth', require('./routes/auth'));
 
 // ===== Aprendizaje por materia =====
-app.use('/api/ed1',           require('./routes/route-ed1'));
-app.use('/api/aserv',         require('./routes/route-aserv'));        // Administración de Servidores
-app.use('/api/mineria',       require('./routes/route-mineria'));      // Minería de Datos
-app.use('/api/redes',         require('./routes/route-redes'));        // Redes
-app.use('/api/algoritmia',    require('./routes/route-algoritmia'));   // Algoritmia
-app.use('/api/teoria',        require('./routes/route-teoria'));       // Teoría de la Computación
-app.use('/api/programacion',  require('./routes/route-programacion')); // Programación
-app.use('/api/ingsoft',       require('./routes/route-ingsoft'));      // Ingeniería de Software
-app.use('/api/seginf',        require('./routes/route-seginf'));
+app.use('/api/ed1', require('./routes/route-ed1'));
+app.use('/api/aserv', require('./routes/route-aserv'));        // Administración de Servidores
+app.use('/api/mineria', require('./routes/route-mineria'));      // Minería de Datos
+app.use('/api/redes', require('./routes/route-redes'));        // Redes
+app.use('/api/algoritmia', require('./routes/route-algoritmia'));   // Algoritmia
+app.use('/api/teoria', require('./routes/route-teoria'));       // Teoría de la Computación
+app.use('/api/programacion', require('./routes/route-programacion')); // Programación
+app.use('/api/ingsoft', require('./routes/route-ingsoft'));      // Ingeniería de Software
+app.use('/api/seginf', require('./routes/route-seginf'));
 
 // Admin
-app.use('/admin/apuntes',     require('./routes/admin-apuntes'));
-app.use('/admin/contenido',   require('./routes/admin-contenido'));
+app.use('/admin/apuntes', require('./routes/admin-apuntes'));
+app.use('/admin/contenido', require('./routes/admin-contenido'));
 
 // Blocks: exponemos rutas tanto en /api/* como en sus alias "planos"
 app.use(blocksRouter);
+
+// Dev tools (solo desarrollo)
+app.use('/api/dev/questions', require('./routes/dev-questions'));
 
 /* =======================
    Healthcheck y raíz

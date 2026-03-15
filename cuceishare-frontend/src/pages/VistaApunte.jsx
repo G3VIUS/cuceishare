@@ -57,6 +57,29 @@ const Skeleton = ({ className = '' }) =>
   <div className={`animate-pulse bg-slate-200 rounded ${className}`} />;
 
 /* ---------- Componente ---------- */
+/* ── Badge de clasificación IA ── */
+const BADGE_STYLES = {
+  'Excelente':  { bg: 'bg-emerald-100', text: 'text-emerald-800', border: 'border-emerald-300', icon: '🏆' },
+  'Incompleto': { bg: 'bg-amber-100',   text: 'text-amber-800',   border: 'border-amber-300',   icon: '⚠️' },
+  'Erróneo':    { bg: 'bg-rose-100',    text: 'text-rose-800',    border: 'border-rose-300',     icon: '❌' },
+};
+function ClasificacionBadge({ resultado, confianza }) {
+  if (!resultado) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border bg-slate-100 text-slate-500 text-xs">
+        🤖 Sin clasificación
+      </span>
+    );
+  }
+  const style = BADGE_STYLES[resultado] || { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-300', icon: '🤖' };
+  const pct = confianza != null ? ` · ${Math.round(confianza * 100)}%` : '';
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-semibold ${style.bg} ${style.text} ${style.border}`}>
+      {style.icon} {resultado}{pct}
+    </span>
+  );
+}
+
 export default function VistaApunte() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -74,6 +97,9 @@ export default function VistaApunte() {
   const [loading, setLoading] = useState(true);    // loading de la vista completa
   const [urlLoading, setUrlLoading] = useState(true);
   const [copied, setCopied] = useState(false);
+
+  // Clasificación IA
+  const [clasificacion, setClasificacion] = useState(undefined); // undefined=cargando, null=no existe, obj=datos
 
   // Para render de texto puro si CORS lo permite
   const [textPreview, setTextPreview] = useState('');
@@ -94,6 +120,24 @@ export default function VistaApunte() {
         setErr(msg);
       } finally {
         if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [id, HEADERS]);
+
+  // 1b) Carga clasificación IA
+  useEffect(() => {
+    let alive = true;
+    setClasificacion(undefined);
+    (async () => {
+      try {
+        const { data } = await axios.get(`${API}/apuntes/${id}/clasificacion`, { headers: HEADERS });
+        if (!alive) return;
+        setClasificacion(data ?? null);
+      } catch (e) {
+        if (!alive) return;
+        // 404 = sin clasificación; otros errores = igual mostramos null
+        setClasificacion(null);
       }
     })();
     return () => { alive = false; };
@@ -274,6 +318,17 @@ export default function VistaApunte() {
           >
             🧩 Bloque
           </Link>
+        )}
+        {/* Badge IA: undefined = cargando, null/sin datos = sin clasificación, obj = resultado */}
+        {clasificacion === undefined ? (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border bg-slate-100 text-slate-400 text-xs animate-pulse">
+            🤖 …
+          </span>
+        ) : (
+          <ClasificacionBadge
+            resultado={clasificacion?.resultado ?? null}
+            confianza={clasificacion?.confianza ?? null}
+          />
         )}
         <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 text-slate-700">
           🏷️ {Array.isArray(item.tags) ? item.tags.join(', ') : (item.tags ?? 'sin tags')}

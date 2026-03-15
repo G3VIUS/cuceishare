@@ -13,6 +13,32 @@ const API =
 const cx = (...xs) => xs.filter(Boolean).join(' ');
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+/* ── Badge de clasificación IA ── */
+const BADGE_STYLES = {
+  'Excelente':  { bg: 'bg-emerald-100', text: 'text-emerald-800', border: 'border-emerald-300', icon: '🏆' },
+  'Incompleto': { bg: 'bg-amber-100',   text: 'text-amber-800',   border: 'border-amber-300',   icon: '⚠️' },
+  'Erróneo':    { bg: 'bg-rose-100',    text: 'text-rose-800',    border: 'border-rose-300',     icon: '❌' },
+};
+function ClasificacionBadge({ resultado, confianza }) {
+  if (!resultado) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border bg-slate-100 text-slate-400 text-xs">
+        🤖 Sin clasificación
+      </span>
+    );
+  }
+  const style = BADGE_STYLES[resultado] || { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-300', icon: '🤖' };
+  const pct = confianza != null ? ` · ${Math.round(confianza * 100)}%` : '';
+  return (
+    <span className={cx(
+      'inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-semibold',
+      style.bg, style.text, style.border
+    )}>
+      {style.icon} {resultado}{pct}
+    </span>
+  );
+}
+
 /* ============================
    UI helpers
 ============================= */
@@ -106,6 +132,8 @@ export default function Perfil() {
   const [apError, setApError] = useState('');
   const [apQuery, setApQuery] = useState('');
   const [apSort, setApSort] = useState('recientes'); // 'recientes' | 'titulo'
+  // Clasificaciones IA: { [apunteId]: { resultado, confianza } | null }
+  const [clasificaciones, setClasificaciones] = useState({});
   const fileInputRef = useRef(null);
 
   // Guard
@@ -165,6 +193,25 @@ export default function Perfil() {
           a.usuario_id === sesionId
         );
         setApuntes(propios);
+
+        // Cargar clasificaciones IA para cada apunte (en paralelo, silencioso)
+        if (propios.length > 0) {
+          const entries = await Promise.all(
+            propios.map(async (a) => {
+              try {
+                const r = await fetch(`${API}/apuntes/${a.id}/clasificacion`, { headers });
+                if (!r.ok) return [a.id, null];
+                const data = await r.json().catch(() => null);
+                return [a.id, data];
+              } catch {
+                return [a.id, null];
+              }
+            })
+          );
+          if (alive) {
+            setClasificaciones(Object.fromEntries(entries));
+          }
+        }
       } catch (e) {
         if (e.name === 'AbortError') return;
         setApError(e.message || 'No se pudieron cargar los apuntes');
@@ -522,11 +569,16 @@ export default function Perfil() {
                   <li key={a.id} className="py-4 flex gap-4 items-start">
                     <div className="h-12 w-12 grid place-items-center rounded-lg bg-indigo-50 text-indigo-700">📄</div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <Link to={`/apunte/${a.id}`} className="font-semibold hover:underline truncate">
                           {title}
                         </Link>
                         <span className="text-xs text-slate-400 truncate">{String(meta).slice(0, 19)}</span>
+                        {/* Badge IA */}
+                        <ClasificacionBadge
+                          resultado={clasificaciones[a.id]?.resultado ?? null}
+                          confianza={clasificaciones[a.id]?.confianza ?? null}
+                        />
                       </div>
                       <p className="text-sm text-slate-600 line-clamp-2">{desc}</p>
                     </div>

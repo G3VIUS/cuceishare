@@ -11,20 +11,18 @@ const API =
   process.env.REACT_APP_API_URL ||
   'http://localhost:3001';
 
-/**
- * slug: visible en UI
- * value: slug REAL para backend (subject_slug y /api/:subject/route/blocks)
- */
+const IA_URL = 'http://localhost:8000';
+
 const SUBJECTS = [
-  { slug: 'ed1',                     nombre: 'Estructuras de Datos I', value: 'ed1' },
+  { slug: 'ed1', nombre: 'Estructuras de Datos I', value: 'ed1' },
   { slug: 'administracion-servidores', nombre: 'Administración de Servidores', value: 'aserv' },
-  { slug: 'mineria-datos',           nombre: 'Minería de Datos', value: 'mineria' },
-  { slug: 'redes',                   nombre: 'Redes', value: 'redes' },
-  { slug: 'algoritmia',              nombre: 'Algoritmia', value: 'algoritmia' },
-  { slug: 'programacion',            nombre: 'Programación', value: 'programacion' },
-  { slug: 'ingenieria-software',     nombre: 'Ingeniería de Software', value: 'isw' },
-  { slug: 'seguridad-informacion',   nombre: 'Seguridad de la Información', value: 'seguridad' },
-  { slug: 'teoria-computacion',      nombre: 'Teoría de la Computación', value: 'teoria' },
+  { slug: 'mineria-datos', nombre: 'Minería de Datos', value: 'mineria' },
+  { slug: 'redes', nombre: 'Redes', value: 'redes' },
+  { slug: 'algoritmia', nombre: 'Algoritmia', value: 'algoritmia' },
+  { slug: 'programacion', nombre: 'Programación', value: 'programacion' },
+  { slug: 'ingenieria-software', nombre: 'Ingeniería de Software', value: 'isw' },
+  { slug: 'seguridad-informacion', nombre: 'Seguridad de la Información', value: 'seguridad' },
+  { slug: 'teoria-computacion', nombre: 'Teoría de la Computación', value: 'teoria' },
 ];
 
 const LS_SUBJECT = 'lastSubjectSlug';
@@ -48,6 +46,34 @@ const prettyBytes = (b) => {
   return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${u[i]}`;
 };
 
+/* ── Badge de clasificación IA ── */
+const BADGE_STYLES = {
+  'Excelente':  { bg: 'bg-emerald-100', text: 'text-emerald-800', border: 'border-emerald-300', icon: '🏆' },
+  'Incompleto': { bg: 'bg-amber-100',   text: 'text-amber-800',   border: 'border-amber-300',   icon: '⚠️' },
+  'Erróneo':    { bg: 'bg-rose-100',    text: 'text-rose-800',    border: 'border-rose-300',     icon: '❌' },
+};
+
+function ClasificacionBadge({ resultado, confianza, loading }) {
+  if (loading) {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border bg-slate-100 text-slate-500 text-xs animate-pulse">
+        🤖 Clasificando…
+      </span>
+    );
+  }
+  if (!resultado) return null;
+  const style = BADGE_STYLES[resultado] || { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-300', icon: '🤖' };
+  const pct = confianza != null ? ` · ${Math.round(confianza * 100)}%` : '';
+  return (
+    <span className={cx(
+      'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold',
+      style.bg, style.text, style.border
+    )}>
+      {style.icon} {resultado}{pct}
+    </span>
+  );
+}
+
 /* ======================
    Component
 ====================== */
@@ -55,7 +81,6 @@ export default function SubirApunte() {
   const navigate = useNavigate();
   const token = localStorage.getItem('token');
 
-  // sesión local
   const sesion = useMemo(() => {
     try { return JSON.parse(localStorage.getItem('usuario')); } catch { return null; }
   }, []);
@@ -83,10 +108,10 @@ export default function SubirApunte() {
   const tags = useMemo(() => tagsInput.split(',').map(t => t.trim()).filter(Boolean), [tagsInput]);
   const [visibilidad, setVisibilidad] = useState('public');
 
-  // bloques (por nombre)
+  // bloques
   const [blocksLoading, setBlocksLoading] = useState(false);
   const [blocksErr, setBlocksErr] = useState('');
-  const [blocks, setBlocks] = useState([]); // [{id,title,code,orden}]
+  const [blocks, setBlocks] = useState([]);
   const [blockId, setBlockId] = useState('');
 
   // archivo
@@ -99,6 +124,12 @@ export default function SubirApunte() {
   const [error, setError] = useState('');
   const [subiendo, setSubiendo] = useState(false);
   const [progreso, setProgreso] = useState(0);
+
+  // Clasificación IA
+  const [iaLoading, setIaLoading] = useState(false);
+  const [iaResultado, setIaResultado] = useState(null);
+  const [iaConfianza, setIaConfianza] = useState(null);
+  const [iaError, setIaError] = useState('');
 
   // cargar bloques cuando cambia la materia
   useEffect(() => {
@@ -116,7 +147,6 @@ export default function SubirApunte() {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
           signal: ctrl.signal,
         });
-
         if (!r.ok) {
           if (r.status !== 404) {
             const j = await r.json().catch(() => ({}));
@@ -126,20 +156,16 @@ export default function SubirApunte() {
             return;
           }
         }
-
         const raw = await r.json().catch(() => ({}));
         const list = Array.isArray(raw?.items) ? raw.items
-                  : Array.isArray(raw?.rows)  ? raw.rows
-                  : Array.isArray(raw)        ? raw
-                  : [];
-
+          : Array.isArray(raw?.rows) ? raw.rows
+            : Array.isArray(raw) ? raw : [];
         const norm = list.map((b, i) => ({
           id: b.id || b.uuid || b.block_id || String(i + 1),
           title: b.title || b.titulo || b.nombre || b.name || b.block_title || `Bloque ${i + 1}`,
           code: b.code ?? null,
           orden: typeof b.orden === 'number' ? b.orden : null,
         }));
-
         if (alive) setBlocks(norm);
       } catch (e) {
         if (alive) setBlocksErr(e.message || 'No se pudieron cargar los bloques');
@@ -156,15 +182,64 @@ export default function SubirApunte() {
     if (!f) return;
     if (f.size > MAX_MB * 1024 * 1024) { setError(`El archivo supera ${MAX_MB} MB.`); return; }
     if (ACCEPT.length && f.type && !ACCEPT.includes(f.type)) { setError('Tipo de archivo no permitido.'); return; }
-    setError(''); setFile(f);
+    setError('');
+    setFile(f);
+    setIaResultado(null);
+    setIaConfianza(null);
+    setIaError('');
   }
   const onDrop = (e) => { e.preventDefault(); e.stopPropagation(); setDragOver(false); onPickFile(e.dataTransfer?.files?.[0]); };
   const onDragOver = (e) => { e.preventDefault(); e.stopPropagation(); setDragOver(true); };
   const onDragLeave = (e) => { e.preventDefault(); e.stopPropagation(); setDragOver(false); };
 
+  /**
+   * El cliente llama directamente al servicio IA y luego guarda el resultado
+   * en el backend (tabla apuntes_clasificaciones) para persistencia.
+   */
+  async function clasificarConIA(fileObj, apunteId) {
+    setIaLoading(true);
+    setIaError('');
+    setIaResultado(null);
+    setIaConfianza(null);
+    try {
+      // 1) Llamar directo al servicio IA desde el cliente
+      const fdIA = new FormData();
+      fdIA.append('file', fileObj);
+      const resIA = await axios.post(`${IA_URL}/api/v1/clasificacion/analizar-archivo`, fdIA, {
+        timeout: 60000,
+      });
+      const { resultado, confianza, todas_las_probabilidades } = resIA.data;
+      setIaResultado(resultado);
+      setIaConfianza(confianza);
+
+      // 2) Guardar en el backend para persistencia
+      if (apunteId) {
+        try {
+          await axios.post(
+            `${API}/apuntes/${apunteId}/clasificacion`,
+            { resultado, confianza, todas_las_probabilidades },
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+        } catch (saveErr) {
+          console.warn('[IA] No se pudo guardar clasificación en DB:', saveErr?.message);
+        }
+      }
+    } catch (errIA) {
+      console.error('[IA] Error al clasificar:', errIA);
+      if (errIA.code === 'ERR_NETWORK' || errIA.code === 'ECONNREFUSED') {
+        setIaError('El servicio de IA no está disponible (localhost:8000).');
+      } else {
+        setIaError(errIA?.response?.data?.detail || errIA.message || 'Error al clasificar');
+      }
+    } finally {
+      setIaLoading(false);
+    }
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     setMensaje(''); setError(''); setProgreso(0);
+    setIaResultado(null); setIaConfianza(null); setIaError('');
 
     if (!titulo.trim()) { setError('❗ El título es obligatorio.'); return; }
     if (!descripcion.trim()) { setError('❗ La descripción es obligatoria.'); return; }
@@ -173,15 +248,14 @@ export default function SubirApunte() {
 
     try {
       setSubiendo(true);
-
       const fd = new FormData();
       fd.append('titulo', titulo);
       fd.append('descripcion', descripcion);
       fd.append('autor', autor);
-      fd.append('subject_slug', subjectValue);   // slug real
+      fd.append('subject_slug', subjectValue);
       fd.append('visibilidad', visibilidad);
       fd.append('tags', JSON.stringify(tags));
-      if (blockId) fd.append('block_id', blockId); // del combo
+      if (blockId) fd.append('block_id', blockId);
       fd.append('file', file);
 
       const { data } = await axios.post(`${API}/apuntes`, fd, {
@@ -192,10 +266,19 @@ export default function SubirApunte() {
         }
       });
 
-      setMensaje(`✅ Apunte creado con ID ${data?.id ?? '—'}`);
+      const apunteId = data?.id;
+      setMensaje(`✅ Apunte creado con ID ${apunteId ?? '—'}`);
+
+      // Guardar ref del file antes de limpiar el form
+      const uploadedFile = file;
       setTitulo(''); setDescripcion(''); setTagsInput('');
       setFile(null); setProgreso(0); setBlockId('');
-      if (data?.id) setTimeout(() => navigate(`/apunte/${data.id}`), 800);
+
+      // Clasificar con IA desde el cliente (no bloquea el flujo)
+      if (apunteId) {
+        clasificarConIA(uploadedFile, apunteId);
+        setTimeout(() => navigate(`/apunte/${apunteId}`), 1500);
+      }
     } catch (err) {
       setError(`❌ Error: ${err?.response?.data?.error || err.message || 'No se pudo subir el apunte'}`);
     } finally {
@@ -217,8 +300,18 @@ export default function SubirApunte() {
       </div>
 
       {/* Mensajes */}
-      {mensaje && <div className="rounded-xl border bg-emerald-50 text-emerald-800 px-3 py-2">✅ {mensaje}</div>}
+      {mensaje && (
+        <div className="rounded-xl border bg-emerald-50 text-emerald-800 px-3 py-2 flex items-center gap-3 flex-wrap">
+          <span>{mensaje}</span>
+          <ClasificacionBadge resultado={iaResultado} confianza={iaConfianza} loading={iaLoading} />
+        </div>
+      )}
       {error && <div className="rounded-xl border bg-rose-50 text-rose-800 px-3 py-2">⚠️ {error}</div>}
+      {iaError && (
+        <div className="rounded-xl border bg-amber-50 text-amber-800 px-3 py-2 text-sm">
+          🤖 Clasificación IA: {iaError}
+        </div>
+      )}
 
       {/* Form */}
       <form onSubmit={handleSubmit} className="bg-white rounded-2xl border shadow-sm p-5 space-y-5">
@@ -248,7 +341,7 @@ export default function SubirApunte() {
           </div>
         </div>
 
-        {/* Bloque por nombre */}
+        {/* Bloque */}
         <div>
           <label className="block mb-1 text-sm font-medium text-slate-700">Bloque (opcional)</label>
           <div className="flex items-center gap-2">
@@ -360,7 +453,7 @@ export default function SubirApunte() {
                   <button
                     type="button"
                     className="mt-2 text-rose-600 text-sm hover:underline"
-                    onClick={() => { setFile(null); setProgreso(0); }}
+                    onClick={() => { setFile(null); setProgreso(0); setIaResultado(null); setIaConfianza(null); setIaError(''); }}
                   >
                     Quitar archivo
                   </button>
@@ -380,6 +473,9 @@ export default function SubirApunte() {
               <li>Describe el contenido y agrega etiquetas.</li>
               <li>Si es tuyo, incluye portada o nombre.</li>
             </ul>
+            <div className="mt-3 pt-3 border-t text-xs text-slate-500">
+              🤖 El apunte se clasificará automáticamente con IA al subir.
+            </div>
           </div>
         </div>
 
@@ -399,8 +495,7 @@ export default function SubirApunte() {
         </div>
       </form>
 
-      <div className="text-xs text-slate-500">
-      </div>
+      <div className="text-xs text-slate-500" />
     </div>
   );
 }
