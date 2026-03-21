@@ -72,7 +72,7 @@ const blocksRouter = require('./routes/blocks');
 // Apuntes
 app.use('/apuntes', require('./routes/apuntes'));
 
-// Clasificación IA (tabla separada apuntes_clasificaciones)
+// Clasificación IA (guarda resultado en campo tags del apunte)
 app.use('/apuntes/:id/clasificacion', require('./routes/clasificacion'));
 
 // Auth

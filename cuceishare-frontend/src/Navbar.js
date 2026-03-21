@@ -4,15 +4,15 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import logo from './logo.png'; // 👈 aquí va tu logo (copia LOGO TRANS.png como logo.png)
 
 const SUBJECTS = [
-  { slug: 'ed1',            nombre: 'Estructuras de Datos I',  routeSlug: 'ed1',            preSlug: 'ed1' },
-  { slug: 'aserv',          nombre: 'Administración de Servidores', routeSlug: 'aserv',     preSlug: 'aserv' },
-  { slug: 'mineria-datos',  nombre: 'Minería de Datos',        routeSlug: 'mineria-datos',  preSlug: 'mineria-datos' },
-  { slug: 'redes',          nombre: 'Redes',                   routeSlug: 'redes',          preSlug: 'redes' },
-  { slug: 'algoritmia',     nombre: 'Algoritmia',              routeSlug: 'algoritmia',     preSlug: 'algoritmia' },
-  { slug: 'programacion',   nombre: 'Programación',            routeSlug: 'programacion',   preSlug: 'programacion' },
-  { slug: 'ingsoft',        nombre: 'Ingeniería de Software',  routeSlug: 'ingsoft',        preSlug: 'ingsoft' },
-  { slug: 'seguridad',      nombre: 'Seguridad de la Información', routeSlug: 'seginf',    preSlug: 'seginf' },
-  { slug: 'teoria',         nombre: 'Teoría de la Computación', routeSlug: 'teoria',       preSlug: 'teoria' },
+  { slug: 'ed1', nombre: 'Estructuras de Datos I', routeSlug: 'ed1', preSlug: 'ed1' },
+  { slug: 'aserv', nombre: 'Administración de Servidores', routeSlug: 'aserv', preSlug: 'aserv' },
+  { slug: 'mineria-datos', nombre: 'Minería de Datos', routeSlug: 'mineria-datos', preSlug: 'mineria-datos' },
+  { slug: 'redes', nombre: 'Redes', routeSlug: 'redes', preSlug: 'redes' },
+  { slug: 'algoritmia', nombre: 'Algoritmia', routeSlug: 'algoritmia', preSlug: 'algoritmia' },
+  { slug: 'programacion', nombre: 'Programación', routeSlug: 'programacion', preSlug: 'programacion' },
+  { slug: 'ingsoft', nombre: 'Ingeniería de Software', routeSlug: 'ingsoft', preSlug: 'ingsoft' },
+  { slug: 'seguridad', nombre: 'Seguridad de la Información', routeSlug: 'seginf', preSlug: 'seginf' },
+  { slug: 'teoria', nombre: 'Teoría de la Computación', routeSlug: 'teoria', preSlug: 'teoria' },
 ];
 
 const LS_SUBJECT = 'lastSubjectSlug';
@@ -47,7 +47,7 @@ export default function Navbar() {
   const [subject, setSubject] = useState(initialSubject);
   const current = SUBJECTS.find(s => s.slug === subject) ?? SUBJECTS[0];
   const rSlug = current.routeSlug || current.slug;
-  const pSlug = current.preSlug   || current.slug;
+  const pSlug = current.preSlug || current.slug;
 
   useEffect(() => { localStorage.setItem(LS_SUBJECT, subject); }, [subject]);
   useEffect(() => {
@@ -80,11 +80,11 @@ export default function Navbar() {
 
   const go = (to) => () => { setMobileOpen(false); setUserOpen(false); navigate(to); };
   const goPreEval = go(`/pre-eval/${pSlug}`);
-  const goRuta    = go(`/ruta/${rSlug}`);
-  const goBuscar  = go(`/buscar?materia=${rSlug}`);
+  const goRuta = go(`/ruta/${rSlug}`);
+  const goBuscar = go(`/buscar?materia=${rSlug}`);
 
-  const goSubir   = () => { setMobileOpen(false); setUserOpen(false); navigate(isAuthed ? '/subir'  : '/login'); };
-  const goPerfil  = () => { setMobileOpen(false); setUserOpen(false); navigate(isAuthed ? '/perfil' : '/login'); };
+  const goSubir = () => { setMobileOpen(false); setUserOpen(false); navigate(isAuthed ? '/subir' : '/login'); };
+  const goPerfil = () => { setMobileOpen(false); setUserOpen(false); navigate(isAuthed ? '/perfil' : '/login'); };
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -97,11 +97,11 @@ export default function Navbar() {
     navigate('/login');
   };
 
-  const btn  = "px-3 h-11 md:h-9 inline-flex items-center justify-center rounded-lg border text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300";
-  const cta  = "px-3 h-11 md:h-9 inline-flex items-center justify-center rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-black focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400";
+  const btn = "px-3 h-11 md:h-9 inline-flex items-center justify-center rounded-lg border text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300";
+  const cta = "px-3 h-11 md:h-9 inline-flex items-center justify-center rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-black focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400";
   const pill = "px-3 h-10 md:h-8 rounded-full border bg-white text-sm";
 
-  const isPre  = isPath(pathname, ['/pre-eval/']);
+  const isPre = isPath(pathname, ['/pre-eval/']);
   const isRuta = isPath(pathname, ['/ruta/']);
   const isFind = isPath(pathname, ['/buscar']);
 
@@ -115,15 +115,12 @@ export default function Navbar() {
         {/* Marca + selector */}
         <div className="flex items-center gap-3 min-w-0">
           {/* Logo + texto */}
-          <Link to="/" className="flex items-center gap-2">
+          <Link to="/" className="relative flex items-center h-16 w-36">
             <img
               src={logo}
               alt="CUCEIShare"
-              className="h-7 w-auto"
+              className="absolute top-1/2 -translate-y-1/2 h-28 w-auto shrink-0 z-10 max-w-none"
             />
-            <span className="text-[16px] sm:text-base font-black tracking-tight text-slate-900">
-              CUCEIShare
-            </span>
           </Link>
 
           {/* Selector materia (md+) */}
@@ -158,7 +155,7 @@ export default function Navbar() {
 
         {/* Lado derecho */}
         <div className="flex items-center gap-2 justify-self-end">
-          <button onClick={goSubir} className="hidden md:inline-flex px-3 h-9 rounded-lg border text-sm font-medium hover:bg-slate-50">
+          <button onClick={goSubir} className={cx("hidden md:inline-flex", btn)}>
             {isAuthed ? 'Subir' : 'Iniciar sesión'}
           </button>
 
@@ -178,7 +175,7 @@ export default function Navbar() {
             className="md:hidden inline-flex h-11 w-11 items-center justify-center rounded-xl bg-white/90 ring-1 ring-slate-200 shadow-sm hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 active:scale-95 transition"
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" className="text-slate-800">
-              <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
           </button>
         </div>

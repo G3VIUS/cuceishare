@@ -8,6 +8,25 @@ const API =
 
 const cx = (...xs) => xs.filter(Boolean).join(' ');
 
+/* ── Badge IA (extraído de tags) ── */
+const IA_BADGE = {
+  'Excelente':  { bg: 'bg-emerald-100', text: 'text-emerald-700', icon: '🏆' },
+  'Incompleto': { bg: 'bg-amber-100',   text: 'text-amber-700',   icon: '⚠️' },
+  'Erróneo':    { bg: 'bg-rose-100',    text: 'text-rose-700',    icon: '❌' },
+};
+function IaBadge({ tags }) {
+  const ia = Array.isArray(tags)
+    ? tags.find(t => t && typeof t === 'object' && t.__ia__ === true)
+    : null;
+  if (!ia) return <span className="text-xs text-slate-400">🤖 Sin clas.</span>;
+  const s = IA_BADGE[ia.resultado] || { bg: 'bg-slate-100', text: 'text-slate-600', icon: '🤖' };
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${s.bg} ${s.text}`}>
+      {s.icon} {ia.resultado}
+    </span>
+  );
+}
+
 /* UI */
 const Btn = ({ className = '', ...p }) => (
   <button
@@ -167,6 +186,7 @@ export default function AdminApuntes() {
               <th className="px-3 py-2 text-left">Título</th>
               <th className="px-3 py-2 text-left">Autor</th>
               <th className="px-3 py-2 text-left">Materia</th>
+              <th className="px-3 py-2 text-left">IA</th>
               <th className="px-3 py-2 text-left">Visibilidad</th>
               <th className="px-3 py-2 text-right w-[220px]">Acciones</th>
             </tr>
@@ -182,6 +202,7 @@ export default function AdminApuntes() {
                 <td className="px-3 py-2">{a.titulo}</td>
                 <td className="px-3 py-2">{a.autor}</td>
                 <td className="px-3 py-2">{a.subject_slug || a.materia || '—'}</td>
+                <td className="px-3 py-2"><IaBadge tags={a.tags} /></td>
                 <td className="px-3 py-2">{a.visibilidad || 'public'}</td>
                 <td className="px-3 py-2">
                   <div className="flex justify-end gap-2">

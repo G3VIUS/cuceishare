@@ -104,9 +104,41 @@ const Skeleton = ({ className = "" }) => (
   <div className={cx("animate-pulse bg-slate-200 rounded-2xl", className)} />
 );
 
+/* ── Clasificación IA (viene dentro de tags como objeto {__ia__:true}) ── */
+const IA_BADGE = {
+  'Excelente':  { bg: 'bg-emerald-100', text: 'text-emerald-800', border: 'border-emerald-200' },
+  'Incompleto': { bg: 'bg-amber-100',   text: 'text-amber-800',   border: 'border-amber-200' },
+  'Erróneo':    { bg: 'bg-rose-100',    text: 'text-rose-800',    border: 'border-rose-200' },
+};
+function extraerIA(tags) {
+  if (!Array.isArray(tags)) return null;
+  return tags.find(t => t && typeof t === 'object' && t.__ia__ === true) || null;
+}
+function soloStrings(tags) {
+  if (!Array.isArray(tags)) return [];
+  return tags.filter(t => typeof t === 'string');
+}
+function ClasificacionBadge({ tags }) {
+  const ia = extraerIA(tags);
+  if (!ia) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border bg-slate-100 text-slate-400 text-[11px]">
+        Sin clasificación
+      </span>
+    );
+  }
+  const style = IA_BADGE[ia.resultado] || { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-200' };
+  const pct = ia.confianza != null ? ` · ${Math.round(ia.confianza * 100)}%` : '';
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-semibold ${style.bg} ${style.text} ${style.border}`}>
+      {ia.resultado}{pct}
+    </span>
+  );
+}
+
 /* ===== Mini design system ===== */
 const btnBase =
-  "inline-flex items-center gap-2 rounded-2xl px-3 py-2 text-sm font-medium transition shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300";
+  "inline-flex items-center gap-2 rounded-2xl px-3 py-2 text-sm font-medium transition shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 whitespace-nowrap";
 const btn = cx(btnBase, "border bg-white hover:bg-slate-50 text-slate-700");
 const btnGhost = cx(btnBase, "border bg-white hover:bg-slate-50 text-slate-700");
 const btnPrimary = cx(
@@ -141,6 +173,7 @@ export default function Buscar() {
   const [q, setQ] = useState(() => searchParams.get("q") || "");
   const [materia, setMateria] = useState(() => normalizeMateria(searchParams.get("materia") || ""));
   const [tag, setTag] = useState(() => searchParams.get("tag") || "");
+  const [clasificacion, setClasificacion] = useState(() => searchParams.get("clasificacion") || "");
   const [orden, setOrden] = useState(() => searchParams.get("orden") || "recientes");
   const [page, setPage] = useState(() => Number(searchParams.get("page") || 1));
   const [pageSize, setPageSize] = useState(() => Number(searchParams.get("pageSize") || 10));
@@ -155,6 +188,9 @@ export default function Buscar() {
 
     const t = searchParams.get("tag") || "";
     if (t !== tag) setTag(t);
+
+    const c = searchParams.get("clasificacion") || "";
+    if (c !== clasificacion) setClasificacion(c);
 
     const o = searchParams.get("orden") || "recientes";
     if (o !== orden) setOrden(o);
@@ -188,11 +224,12 @@ export default function Buscar() {
     if (q.trim()) next.set("q", q.trim());
     if (materia) next.set("materia", normalizeMateria(materia));
     if (tag) next.set("tag", tag);
+    if (clasificacion) next.set("clasificacion", clasificacion);
     if (orden && orden !== "recientes") next.set("orden", orden);
     if (page && page !== 1) next.set("page", String(page));
     if (pageSize && pageSize !== 10) next.set("pageSize", String(pageSize));
     setSearchParams(next, { replace: true });
-  }, [q, materia, tag, orden, page, pageSize, setSearchParams]);
+  }, [q, materia, tag, clasificacion, orden, page, pageSize, setSearchParams]);
 
   // Fetch con debounce (pasa materia normalizada al backend)
   useEffect(() => {
@@ -256,13 +293,14 @@ export default function Buscar() {
   const tagsUniverse = useMemo(() => {
     const set = new Set();
     items.forEach((a) => {
-      const tags = Array.isArray(a.etiquetas || a.tags)
+      const rawTags = Array.isArray(a.etiquetas || a.tags)
         ? a.etiquetas || a.tags
         : String(a.etiquetas || a.tags || "")
             .split(",")
             .map((t) => t.trim())
             .filter(Boolean);
-      tags.forEach((t) => set.add(t));
+      // solo strings — excluir el objeto __ia__
+      rawTags.filter(t => typeof t === 'string').forEach((t) => set.add(t));
     });
     return Array.from(set).slice(0, 100).sort((a, b) => a.localeCompare(b));
   }, [items]);
@@ -278,7 +316,7 @@ export default function Buscar() {
         const autor = String(a.autor || a.user || a.usuario || "").toLowerCase();
         const desc = String(a.descripcion || a.description || "").toLowerCase();
         const tagStr = Array.isArray(a.etiquetas || a.tags)
-          ? (a.etiquetas || a.tags).join(",").toLowerCase()
+          ? (a.etiquetas || a.tags).filter(t => typeof t === 'string').join(",").toLowerCase()
           : String(a.etiquetas || a.tags || "").toLowerCase();
         return (
           title.includes(ql) ||
@@ -301,11 +339,21 @@ export default function Buscar() {
     if (tag) {
       arr = arr.filter((a) => {
         const t = Array.isArray(a.etiquetas || a.tags)
-          ? a.etiquetas || a.tags
+          ? (a.etiquetas || a.tags).filter(x => typeof x === 'string')
           : String(a.etiquetas || a.tags || "")
               .split(",")
               .map((x) => x.trim());
         return t.map((x) => x.toLowerCase()).includes(String(tag).toLowerCase());
+      });
+    }
+
+    if (clasificacion) {
+      arr = arr.filter((a) => {
+        const ia = extraerIA(a.etiquetas || a.tags);
+        if (clasificacion === "sin") {
+          return !ia;
+        }
+        return ia && ia.resultado === clasificacion;
       });
     }
 
@@ -322,7 +370,7 @@ export default function Buscar() {
     });
 
     return arr;
-  }, [items, q, materia, tag, orden]);
+  }, [items, q, materia, tag, clasificacion, orden]);
 
   // Paginación
   const total = filteredAll.length;
@@ -355,6 +403,7 @@ export default function Buscar() {
     setQ("");
     setMateria("");
     setTag("");
+    setClasificacion("");
     setOrden("recientes");
     setPage(1);
     setPageSize(10);
@@ -406,7 +455,7 @@ export default function Buscar() {
 
       {/* Barra de búsqueda + filtros (sin semestre ni blockId) */}
       <form onSubmit={onSubmit} className="grid grid-cols-1 md:grid-cols-12 gap-2 md:gap-3">
-        <div className="md:col-span-7">
+        <div className="md:col-span-5">
           <input
             className={inputClass}
             placeholder="Busca por título, autor o descripción…"
@@ -458,6 +507,24 @@ export default function Buscar() {
         <div className="md:col-span-2">
           <select
             className={selectClass}
+            value={clasificacion}
+            onChange={(e) => {
+              setClasificacion(e.target.value);
+              setPage(1);
+            }}
+            aria-label="Filtrar por clasificación"
+          >
+            <option value="">Todas las clasificaciones</option>
+            <option value="Excelente">Excelente</option>
+            <option value="Incompleto">Incompleto</option>
+            <option value="Erróneo">Erróneo</option>
+            <option value="sin">Sin clasificación</option>
+          </select>
+        </div>
+
+        <div className="md:col-span-2">
+          <select
+            className={selectClass}
             value={tag}
             onChange={(e) => {
               setTag(e.target.value);
@@ -476,7 +543,7 @@ export default function Buscar() {
       </form>
 
       {/* Chips activos (sin semestre ni blockId) */}
-      {(q || materia || tag) && (
+      {(q || materia || tag || clasificacion) && (
         <div className="flex items-center gap-2 flex-wrap text-sm">
           <span className="text-slate-500">Filtros:</span>
           {q && (
@@ -492,6 +559,11 @@ export default function Buscar() {
           {tag && (
             <button onClick={() => setTag("")} className={btn}>
               tag: #{tag} ×
+            </button>
+          )}
+          {clasificacion && (
+            <button onClick={() => setClasificacion("")} className={btn}>
+              clasificación: {clasificacion === "sin" ? "Sin clasificación" : clasificacion} ×
             </button>
           )}
         </div>
@@ -555,7 +627,7 @@ export default function Buscar() {
                 >
                   ‹ Anterior
                 </button>
-                <span className="px-2 py-1 rounded-full bg-white border shadow-sm">
+                <span className="px-2 py-1 rounded-full bg-white border shadow-sm whitespace-nowrap">
                   {pageSafe} / {Math.max(1, Math.ceil(filteredAll.length / pageSize))}
                 </span>
                 <button
@@ -580,12 +652,13 @@ export default function Buscar() {
               const mslug = normalizeMateria(mraw);
               const mlabel = materiaLabel(mslug);
               const semestreN = a.semestre || a.semester || ""; // solo mostrar, ya no filtra
-              const tags = Array.isArray(a.etiquetas || a.tags)
+              const tags = soloStrings(Array.isArray(a.etiquetas || a.tags)
                 ? a.etiquetas || a.tags
                 : String(a.etiquetas || a.tags || "")
                     .split(",")
                     .map((t) => t.trim())
-                    .filter(Boolean);
+                    .filter(Boolean));
+              const rawTags = Array.isArray(a.etiquetas || a.tags) ? (a.etiquetas || a.tags) : [];
               const fecha = a.created_at || a.creado_en || a.fecha || "";
 
               return (
@@ -612,6 +685,8 @@ export default function Buscar() {
                           {semestreN && (
                             <span className={btnPill}>Sem {semestreN}</span>
                           )}
+                          {/* Badge IA */}
+                          <ClasificacionBadge tags={rawTags} />
                         </div>
 
                         {(a.descripcion || a.description) && (

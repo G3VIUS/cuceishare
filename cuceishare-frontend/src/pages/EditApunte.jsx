@@ -61,6 +61,9 @@ export default function EditApunte() {
   const [file, setFile] = useState(null);
   const fileInputRef = useRef(null);
 
+  // Clasificación IA a preservar
+  const [iaTag, setIaTag] = useState(null);
+
   // bloques (según materia)
   const [blocksLoading, setBlocksLoading] = useState(false);
   const [blocksErr, setBlocksErr] = useState("");
@@ -84,18 +87,25 @@ export default function EditApunte() {
 
         if (!alive) return;
 
-        const tagsArray = Array.isArray(j.tags)
+        const rawTags = Array.isArray(j.tags)
           ? j.tags
           : typeof j.tags === "string"
           ? j.tags.split(",").map((s) => s.trim()).filter(Boolean)
           : [];
+
+        // Extraer objeto IA para no borrarlo
+        const ia = rawTags.find(t => t && typeof t === "object" && t.__ia__ === true);
+        if (ia) setIaTag(ia);
+
+        // Solo strings para el campo de texto CSV
+        const strings = rawTags.filter(t => typeof t === "string");
 
         setForm({
           titulo: j.titulo ?? "",
           descripcion: j.descripcion ?? "",
           subject_slug: j.subject_slug ?? "",
           block_id: j.block_id ?? "",
-          tagsCsv: tagsArray.join(", "),
+          tagsCsv: strings.join(", "),
           visibilidad: j.visibilidad ?? "public",
         });
 
@@ -221,9 +231,12 @@ export default function EditApunte() {
     try {
       setSaving(true);
 
-      const tags = form.tagsCsv
+      const strings = form.tagsCsv
         ? form.tagsCsv.split(",").map((s) => s.trim()).filter(Boolean)
         : [];
+      
+      // Volver a insertar el objeto IA para no sobreescribirlo
+      const tags = iaTag ? [...strings, iaTag] : strings;
 
       let r, j;
 

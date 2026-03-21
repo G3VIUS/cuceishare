@@ -11,7 +11,15 @@ const API =
   process.env.REACT_APP_API_URL ||
   'http://localhost:3001';
 
-const IA_URL = 'http://localhost:8000';
+const IA_URL =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_IA_URL) ||
+  process.env.REACT_APP_IA_URL ||
+  'https://iamodule.onrender.com';
+
+const IA_SECRET =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_IA_SECRET) ||
+  process.env.REACT_APP_IA_SECRET ||
+  '';
 
 const SUBJECTS = [
   { slug: 'ed1', nombre: 'Estructuras de Datos I', value: 'ed1' },
@@ -48,28 +56,28 @@ const prettyBytes = (b) => {
 
 /* ── Badge de clasificación IA ── */
 const BADGE_STYLES = {
-  'Excelente':  { bg: 'bg-emerald-100', text: 'text-emerald-800', border: 'border-emerald-300', icon: '🏆' },
-  'Incompleto': { bg: 'bg-amber-100',   text: 'text-amber-800',   border: 'border-amber-300',   icon: '⚠️' },
-  'Erróneo':    { bg: 'bg-rose-100',    text: 'text-rose-800',    border: 'border-rose-300',     icon: '❌' },
+  'Excelente':  { bg: 'bg-emerald-100', text: 'text-emerald-800', border: 'border-emerald-300' },
+  'Incompleto': { bg: 'bg-amber-100',   text: 'text-amber-800',   border: 'border-amber-300' },
+  'Erróneo':    { bg: 'bg-rose-100',    text: 'text-rose-800',    border: 'border-rose-300' },
 };
 
 function ClasificacionBadge({ resultado, confianza, loading }) {
   if (loading) {
     return (
       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border bg-slate-100 text-slate-500 text-xs animate-pulse">
-        🤖 Clasificando…
+        Clasificando…
       </span>
     );
   }
   if (!resultado) return null;
-  const style = BADGE_STYLES[resultado] || { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-300', icon: '🤖' };
+  const style = BADGE_STYLES[resultado] || { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-300' };
   const pct = confianza != null ? ` · ${Math.round(confianza * 100)}%` : '';
   return (
     <span className={cx(
       'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold',
       style.bg, style.text, style.border
     )}>
-      {style.icon} {resultado}{pct}
+      {resultado}{pct}
     </span>
   );
 }
@@ -207,6 +215,8 @@ export default function SubirApunte() {
       fdIA.append('file', fileObj);
       const resIA = await axios.post(`${IA_URL}/api/v1/clasificacion/analizar-archivo`, fdIA, {
         timeout: 60000,
+        // Header de seguridad — mismo valor que API_SECRET_KEY en IA_Module/.env
+        headers: IA_SECRET ? { 'X-API-Key': IA_SECRET } : {},
       });
       const { resultado, confianza, todas_las_probabilidades } = resIA.data;
       setIaResultado(resultado);
@@ -227,7 +237,7 @@ export default function SubirApunte() {
     } catch (errIA) {
       console.error('[IA] Error al clasificar:', errIA);
       if (errIA.code === 'ERR_NETWORK' || errIA.code === 'ECONNREFUSED') {
-        setIaError('El servicio de IA no está disponible (localhost:8000).');
+        setIaError('El servicio de IA no está disponible.');
       } else {
         setIaError(errIA?.response?.data?.detail || errIA.message || 'Error al clasificar');
       }

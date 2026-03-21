@@ -1,6 +1,7 @@
 // src/pages/Perfil.jsx
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import axios from 'axios';
 
 /* ============================
    Config
@@ -10,31 +11,52 @@ const API =
   process.env.REACT_APP_API_URL ||
   'http://localhost:3001';
 
+const IA_URL =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_IA_URL) ||
+  process.env.REACT_APP_IA_URL ||
+  'https://iamodule.onrender.com';
+
+const IA_SECRET =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_IA_SECRET) ||
+  process.env.REACT_APP_IA_SECRET ||
+  '';
+
 const cx = (...xs) => xs.filter(Boolean).join(' ');
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-/* ── Badge de clasificación IA ── */
-const BADGE_STYLES = {
-  'Excelente':  { bg: 'bg-emerald-100', text: 'text-emerald-800', border: 'border-emerald-300', icon: '🏆' },
-  'Incompleto': { bg: 'bg-amber-100',   text: 'text-amber-800',   border: 'border-amber-300',   icon: '⚠️' },
-  'Erróneo':    { bg: 'bg-rose-100',    text: 'text-rose-800',    border: 'border-rose-300',     icon: '❌' },
+
+/* ── Badge IA (extraído directo de tags) ── */
+const IA_BADGE = {
+  'Excelente':  { bg: 'bg-emerald-100', text: 'text-emerald-800', border: 'border-emerald-300' },
+  'Incompleto': { bg: 'bg-amber-100',   text: 'text-amber-800',   border: 'border-amber-300' },
+  'Erróneo':    { bg: 'bg-rose-100',    text: 'text-rose-800',    border: 'border-rose-300' },
 };
-function ClasificacionBadge({ resultado, confianza }) {
-  if (!resultado) {
+function ClasificacionBadge({ tags, loading }) {
+  if (loading) {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border bg-slate-100 text-slate-400 text-xs">
-        🤖 Sin clasificación
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border bg-slate-100 text-slate-500 text-xs animate-pulse">
+        Clasificando…
       </span>
     );
   }
-  const style = BADGE_STYLES[resultado] || { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-300', icon: '🤖' };
-  const pct = confianza != null ? ` · ${Math.round(confianza * 100)}%` : '';
+  const ia = Array.isArray(tags)
+    ? tags.find(t => t && typeof t === 'object' && t.__ia__ === true)
+    : null;
+  if (!ia) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border bg-slate-100 text-slate-400 text-xs">
+        Sin clasificación
+      </span>
+    );
+  }
+  const style = IA_BADGE[ia.resultado] || { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-300' };
+  const pct = ia.confianza != null ? ` · ${Math.round(ia.confianza * 100)}%` : '';
   return (
     <span className={cx(
       'inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-semibold',
       style.bg, style.text, style.border
     )}>
-      {style.icon} {resultado}{pct}
+      {ia.resultado}{pct}
     </span>
   );
 }
@@ -132,9 +154,11 @@ export default function Perfil() {
   const [apError, setApError] = useState('');
   const [apQuery, setApQuery] = useState('');
   const [apSort, setApSort] = useState('recientes'); // 'recientes' | 'titulo'
-  // Clasificaciones IA: { [apunteId]: { resultado, confianza } | null }
-  const [clasificaciones, setClasificaciones] = useState({});
+  // Clasificaciones IA: ya vienen dentro de tags — no necesitamos requests extra
   const fileInputRef = useRef(null);
+  const [imgError, setImgError] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  useEffect(() => { setImgError(false); }, [form.avatar_url]);
 
   // Guard
   useEffect(() => {
@@ -193,25 +217,6 @@ export default function Perfil() {
           a.usuario_id === sesionId
         );
         setApuntes(propios);
-
-        // Cargar clasificaciones IA para cada apunte (en paralelo, silencioso)
-        if (propios.length > 0) {
-          const entries = await Promise.all(
-            propios.map(async (a) => {
-              try {
-                const r = await fetch(`${API}/apuntes/${a.id}/clasificacion`, { headers });
-                if (!r.ok) return [a.id, null];
-                const data = await r.json().catch(() => null);
-                return [a.id, data];
-              } catch {
-                return [a.id, null];
-              }
-            })
-          );
-          if (alive) {
-            setClasificaciones(Object.fromEntries(entries));
-          }
-        }
       } catch (e) {
         if (e.name === 'AbortError') return;
         setApError(e.message || 'No se pudieron cargar los apuntes');
@@ -314,6 +319,47 @@ export default function Perfil() {
     }
   }
 
+  const [loadingIA, setLoadingIA] = useState({});
+  async function handleClassify(apunte) {
+    if (!apunte.file_url) { alert('No hay archivo asociado para clasificar.'); return; }
+    setLoadingIA(prev => ({ ...prev, [apunte.id]: true }));
+    try {
+      // 1) Descargar archivo
+      const response = await axios.get(apunte.file_url, { responseType: 'blob' });
+      const fileBlob = response.data;
+      const fileObj = new File([fileBlob], apunte.file_path?.split('/').pop() || 'archivo', { type: apunte.file_mime });
+
+      // 2) Clasificar con IA
+      const fdIA = new FormData();
+      fdIA.append('file', fileObj);
+      const resIA = await axios.post(`${IA_URL}/api/v1/clasificacion/analizar-archivo`, fdIA, {
+        timeout: 60000,
+        headers: IA_SECRET ? { 'X-API-Key': IA_SECRET } : {},
+      });
+      const { resultado, confianza, todas_las_probabilidades } = resIA.data;
+
+      // 3) Guardar en backend
+      await axios.post(
+          `${API}/apuntes/${apunte.id}/clasificacion`,
+          { resultado, confianza, todas_las_probabilidades },
+          { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      // 4) Actualizar UI
+      setApuntes(prev => prev.map(a => {
+        if (a.id !== apunte.id) return a;
+        const sinIA = Array.isArray(a.tags) ? a.tags.filter(t => !(t && typeof t === 'object' && t.__ia__ === true)) : [];
+        const nuevoIA = { __ia__: true, resultado, confianza, clasificado_en: new Date().toISOString() };
+        return { ...a, tags: [...sinIA, nuevoIA] };
+      }));
+    } catch (err) {
+      const apiErr = err.response?.data?.error || err.response?.data?.detail || JSON.stringify(err.response?.data) || err.message;
+      alert(`Error clasificado: ${apiErr} (Status: ${err.response?.status || 'desconocido'})`);
+    } finally {
+      setLoadingIA(prev => ({ ...prev, [apunte.id]: false }));
+    }
+  }
+
   if (!token) {
     return (
       <div className="p-6 text-center">
@@ -330,195 +376,217 @@ export default function Perfil() {
 
   return (
     <div className="max-w-6xl mx-auto p-4 md:p-6 space-y-6">
-      {/* App bar */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="min-w-0">
-          <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight">
-            Perfil
+      {/* Rediseño Banner Profile con Avatar flotante */}
+      <div className="relative">
+        <div className="rounded-3xl bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-600 h-32 md:h-40 shadow-sm" />
+        
+        {/* Floating Avatar */}
+        <div className="absolute -bottom-12 left-6 md:left-10">
+          <div className="relative aspect-square w-24 md:w-32 rounded-3xl p-1 bg-white shadow-xl border border-slate-100/10">
+            <div className="rounded-2xl overflow-hidden h-full w-full bg-slate-50 border flex items-center justify-center">
+              {profileLoading ? (
+                <Skeleton className="h-full w-full" />
+              ) : form.avatar_url && !imgError ? (
+                <img
+                  src={form.avatar_url}
+                  onError={() => setImgError(true)}
+                  alt="Avatar"
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <div className="h-full w-full grid place-items-center text-4xl font-extrabold bg-indigo-50 text-indigo-700">
+                  {form.nombre?.[0]?.toUpperCase() || '👤'}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Barra de Título e Información Básica */}
+      <div className="flex flex-wrap items-end justify-between pt-14 pb-4 px-2 gap-4">
+        <div>
+          <h2 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight">
+            {form.nombre ? `${form.nombre} ${form.apellido}` : username}
           </h2>
-          <p className="text-slate-500 text-sm">
-            Completa tu información para personalizar tu ruta de aprendizaje.
-          </p>
+          <p className="text-slate-500 text-sm font-medium">@{username} · <span className="capitalize">{role}</span></p>
         </div>
 
         <div className="flex items-center gap-2">
-          <Link to="/subir" className="px-3 py-2 rounded-xl bg-indigo-600 text-white font-medium shadow-sm">
+          <button
+            onClick={() => setIsEditing(!isEditing)}
+            className={cx(
+              "px-3 py-2 text-sm rounded-xl font-semibold border shadow-sm transition flex items-center gap-1",
+              isEditing || completion === 100
+                ? "bg-white text-slate-700 hover:bg-slate-50"
+                : "bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100"
+            )}
+          >
+            {isEditing ? 'Ocultar edición' : completion < 100 ? 'Completar perfil' : 'Editar perfil'}
+          </button>
+
+          <Link to="/subir" className="px-3 py-2 text-sm rounded-xl bg-indigo-600 text-white font-semibold shadow-md hover:bg-indigo-700 transition">
             ➕ Subir apunte
           </Link>
           <button
             onClick={() => { localStorage.removeItem('token'); localStorage.removeItem('usuario'); navigate('/login'); }}
-            className="px-3 py-2 rounded-xl bg-slate-200 text-slate-800 font-medium"
+            className="px-4 py-2 text-sm rounded-xl bg-slate-100 text-slate-700 font-semibold border hover:bg-slate-200 transition"
           >
             Cerrar sesión
           </button>
         </div>
       </div>
 
-      {/* Stats row */}
+      {/* Datos rápidos / Compleción */}
       <div className="grid sm:grid-cols-3 gap-3">
-        <Stat label="Usuario" value={username} icon="👤" />
-        <Stat label="Rol" value={role} icon="🎓" />
-        <div className="p-4 rounded-xl border bg-slate-50">
-          <div className="flex items-center justify-between">
-            <div className="text-xs text-slate-500">Compleción del perfil</div>
-            <div className="text-xs text-slate-500">{completion}%</div>
+        <Stat label="Matrícula" value={form.matricula || 'Sin vincular'} icon="🔑" />
+        <Stat label="Carrera" value={form.carrera || 'Por definir'} icon="🎓" />
+        <div className="p-4 rounded-xl border bg-white shadow-sm flex flex-col justify-center">
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-xs text-slate-500 font-medium">Compleción del perfil</div>
+            <div className="text-sm font-bold text-indigo-700">{completion}%</div>
           </div>
-          <div className="mt-2 h-2 rounded-full bg-slate-200 overflow-hidden">
-            <div className="h-2 bg-indigo-600 rounded-full transition-[width] duration-500" style={{ width: `${completion}%` }} />
+          <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden border">
+            <div className="h-full bg-gradient-to-r from-indigo-500 to-indigo-600 rounded-full transition-[width] duration-700" style={{ width: `${completion}%` }} />
           </div>
         </div>
       </div>
 
-      {/* Perfil Card */}
-      <Card>
-        <SectionHeader
-          title="Datos personales"
-          subtitle="Solo se usan para personalizar tu experiencia."
-          right={
-            <div className="flex items-center gap-3">
-              {saved && <span className="text-emerald-700 text-sm">✅ {saved}</span>}
-              {saveError && <span className="text-rose-700 text-sm">⚠️ {saveError}</span>}
+      {/* Layout de Formulario */}
+      {isEditing && (
+      <Card className="p-6 grid lg:grid-cols-[250px_1fr] gap-8">
+        {/* Columna Izquierda: Controles del Avatar */}
+        <div className="space-y-4">
+          <h4 className="text-sm font-bold text-slate-800">Foto de perfil</h4>
+          <p className="text-xs text-slate-500 leading-relaxed">Puedes subir un archivo local (vista previa) o vincular una imagen pública mediante una URL.</p>
+          
+          <div className="space-y-2">
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={onPickAvatarFile} />
+            <div className="flex gap-2">
               <button
-                onClick={onSave}
-                disabled={saving}
-                className={cx(
-                  'px-4 py-2 rounded-xl text-white font-semibold shadow-sm',
-                  saving ? 'bg-indigo-400' : 'bg-indigo-600 hover:bg-indigo-700'
-                )}
+                onClick={() => fileInputRef.current?.click()}
+                className="flex-1 px-3 py-2 text-sm font-semibold rounded-xl border bg-white hover:bg-slate-50 shadow-sm"
+                type="button"
               >
-                {saving ? 'Guardando…' : 'Guardar cambios'}
+                Subir imagen
+              </button>
+              <button
+                onClick={() => setForm(prev => ({ ...prev, avatar_url: '' }))}
+                className="px-3 py-2 text-sm font-semibold rounded-xl border bg-white hover:bg-slate-50 text-rose-700 shadow-sm"
+                type="button"
+              >
+                Quitar
               </button>
             </div>
-          }
-        />
-
-        <div className="p-5 grid lg:grid-cols-[220px_1fr] gap-6">
-          {/* Avatar */}
-          <div className="space-y-3">
-            <div className="relative">
-              <div className="aspect-square w-40 rounded-2xl overflow-hidden border bg-slate-100">
-                {profileLoading ? (
-                  <Skeleton className="h-full w-full" />
-                ) : form.avatar_url ? (
-                  // eslint-disable-next-line jsx-a11y/img-redundant-alt
-                  <img src={form.avatar_url} alt="Avatar preview" className="h-full w-full object-cover" />
-                ) : (
-                  <div className="h-full w-full grid place-items-center text-4xl">🧑🏻‍💻</div>
-                )}
-              </div>
-              <div className="mt-3 grid gap-2">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={onPickAvatarFile}
-                />
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex-1 px-3 py-2 rounded-lg border bg-white hover:bg-slate-50"
-                    type="button"
-                  >
-                    Subir imagen
-                  </button>
-                  <button
-                    onClick={() => setForm(prev => ({ ...prev, avatar_url: '' }))}
-                    className="px-3 py-2 rounded-lg border bg-white hover:bg-slate-50"
-                    type="button"
-                  >
-                    Quitar
-                  </button>
-                </div>
-                <Field hint="O pega una URL pública:">
-                  <input
-                    className="w-full px-3 py-2 rounded-lg border"
-                    placeholder="https://…/avatar.png"
-                    value={form.avatar_url}
-                    onChange={(e) => setForm(prev => ({ ...prev, avatar_url: e.target.value }))}
-                  />
-                </Field>
-              </div>
-            </div>
+            <Field hint="O pega una URL pública:">
+              <input
+                className="w-full px-3 py-2 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                placeholder="https://…/avatar.png"
+                value={form.avatar_url}
+                onChange={(e) => setForm(prev => ({ ...prev, avatar_url: e.target.value }))}
+              />
+            </Field>
           </div>
+        </div>
 
-          {/* Form */}
-          <form onSubmit={onSave} className="grid md:grid-cols-2 gap-4">
-            <Field label="Nombre" required error={errors.nombre}>
-              <input
-                className="w-full px-3 py-2 rounded-lg border"
-                value={form.nombre}
-                onChange={(e) => setForm({ ...form, nombre: e.target.value })}
-                placeholder="Tu nombre"
-              />
-            </Field>
-            <Field label="Apellido" required error={errors.apellido}>
-              <input
-                className="w-full px-3 py-2 rounded-lg border"
-                value={form.apellido}
-                onChange={(e) => setForm({ ...form, apellido: e.target.value })}
-                placeholder="Tu apellido"
-              />
-            </Field>
-            <Field label="Matrícula">
-              <input
-                className="w-full px-3 py-2 rounded-lg border"
-                value={form.matricula}
-                onChange={(e) => setForm({ ...form, matricula: e.target.value })}
-                placeholder="Ej. 21234567"
-              />
-            </Field>
-            <Field label="Carrera">
-              <input
-                className="w-full px-3 py-2 rounded-lg border"
-                value={form.carrera}
-                onChange={(e) => setForm({ ...form, carrera: e.target.value })}
-                placeholder="Ing. Informática"
-              />
-            </Field>
-            <Field label="Semestre">
-              <input
-                className="w-full px-3 py-2 rounded-lg border"
-                value={form.semestre}
-                onChange={(e) => setForm({ ...form, semestre: e.target.value })}
-                placeholder="6"
-              />
-            </Field>
-            <Field label="Teléfono" error={errors.telefono}>
-              <input
-                className="w-full px-3 py-2 rounded-lg border"
-                value={form.telefono}
-                onChange={(e) => setForm({ ...form, telefono: e.target.value })}
-                placeholder="33-xxxx-xxxx"
-              />
-            </Field>
-            <Field label="Correo" error={errors.correo}>
-              <input
-                className="w-full px-3 py-2 rounded-lg border"
-                value={form.correo}
-                onChange={(e) => setForm({ ...form, correo: e.target.value })}
-                placeholder="tucorreo@cucei.mx"
-              />
-            </Field>
-            <div className="md:col-span-2">
-              <div className="flex items-center gap-3">
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className={cx(
-                    'px-4 py-2 rounded-xl text-white font-semibold shadow-sm',
-                    saving ? 'bg-indigo-400' : 'bg-indigo-600 hover:bg-indigo-700'
-                  )}
-                >
-                  {saving ? 'Guardando…' : 'Guardar cambios'}
-                </button>
-                {saved && <span className="text-emerald-700 text-sm">✅ {saved}</span>}
-                {saveError && !saved && <span className="text-rose-700 text-sm">⚠️ {saveError}</span>}
-              </div>
-            </div>
-          </form>
+        {/* Columna Derecha: El formulario */}
+        <div className="space-y-5">
+           <div className="flex items-center justify-between border-b pb-4">
+             <div>
+               <h3 className="text-lg font-bold text-slate-800">Datos personales</h3>
+               <p className="text-xs text-slate-500">Información básica para personalizar tu cuenta</p>
+             </div>
+             
+             <button
+               onClick={onSave}
+               disabled={saving}
+               className={cx(
+                 'px-4 py-2 text-sm rounded-xl text-white font-semibold shadow-md',
+                 saving ? 'bg-indigo-400' : 'bg-indigo-600 hover:bg-indigo-700 hover:scale-[1.02] transition'
+               )}
+             >
+               {saving ? 'Guardando…' : 'Guardar cambios'}
+             </button>
+           </div>
+
+           <form onSubmit={onSave} className="grid md:grid-cols-2 gap-4">
+             <Field label="Nombre" required error={errors.nombre}>
+               <input
+                 className="w-full px-3 py-2.5 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                 value={form.nombre}
+                 onChange={(e) => setForm({ ...form, nombre: e.target.value })}
+                 placeholder="Tu nombre"
+               />
+             </Field>
+             <Field label="Apellido" required error={errors.apellido}>
+               <input
+                 className="w-full px-3 py-2.5 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                 value={form.apellido}
+                 onChange={(e) => setForm({ ...form, apellido: e.target.value })}
+                 placeholder="Tu apellido"
+               />
+             </Field>
+             <Field label="Matrícula">
+               <input
+                 className="w-full px-3 py-2.5 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                 value={form.matricula}
+                 onChange={(e) => setForm({ ...form, matricula: e.target.value })}
+                 placeholder="Ej. 21234567"
+               />
+             </Field>
+             <Field label="Carrera">
+               <input
+                 className="w-full px-3 py-2.5 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                 value={form.carrera}
+                 onChange={(e) => setForm({ ...form, carrera: e.target.value })}
+                 placeholder="Ing. Informática"
+               />
+             </Field>
+             <Field label="Semestre">
+               <input
+                 className="w-full px-3 py-2.5 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                 value={form.semestre}
+                 onChange={(e) => setForm({ ...form, semestre: e.target.value })}
+                 placeholder="6"
+               />
+             </Field>
+             <Field label="Teléfono" error={errors.telefono}>
+               <input
+                 className="w-full px-3 py-2.5 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                 value={form.telefono}
+                 onChange={(e) => setForm({ ...form, telefono: e.target.value })}
+                 placeholder="33-xxxx-xxxx"
+               />
+             </Field>
+             <Field label="Correo" error={errors.correo}>
+               <input
+                 className="w-full px-3 py-2.5 text-sm rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                 value={form.correo}
+                 onChange={(e) => setForm({ ...form, correo: e.target.value })}
+                 placeholder="tucorreo@cucei.mx"
+               />
+             </Field>
+             
+             <div className="md:col-span-2 pt-2">
+               <div className="flex items-center gap-3">
+                 <button
+                   type="submit"
+                   disabled={saving}
+                   className={cx(
+                     'px-5 py-2.5 text-sm rounded-xl text-white font-semibold shadow-md',
+                     saving ? 'bg-indigo-400' : 'bg-indigo-600 hover:bg-indigo-700'
+                   )}
+                 >
+                   {saving ? 'Guardando…' : 'Guardar cambios'}
+                 </button>
+                 {saved && <span className="text-emerald-700 text-sm font-medium">✅ {saved}</span>}
+                 {saveError && !saved && <span className="text-rose-700 text-sm">⚠️ {saveError}</span>}
+               </div>
+             </div>
+           </form>
         </div>
       </Card>
+      )}
 
       {/* Apuntes Card */}
       <Card>
@@ -574,24 +642,30 @@ export default function Perfil() {
                           {title}
                         </Link>
                         <span className="text-xs text-slate-400 truncate">{String(meta).slice(0, 19)}</span>
-                        {/* Badge IA */}
-                        <ClasificacionBadge
-                          resultado={clasificaciones[a.id]?.resultado ?? null}
-                          confianza={clasificaciones[a.id]?.confianza ?? null}
-                        />
+                        {/* Badge IA — viene directo de a.tags */}
+                        <ClasificacionBadge tags={a.tags} loading={loadingIA[a.id]} />
                       </div>
                       <p className="text-sm text-slate-600 line-clamp-2">{desc}</p>
                     </div>
-                    <div className="shrink-0 flex gap-2">
+                    <div className="shrink-0 flex items-center gap-2 flex-wrap">
+                      {a.file_url && (
+                        <button
+                          onClick={() => handleClassify(a)}
+                          disabled={loadingIA[a.id]}
+                          className="px-3 py-1.5 rounded-lg border bg-slate-100 hover:bg-slate-200 text-indigo-700 font-medium text-sm flex items-center gap-1"
+                        >
+                          {loadingIA[a.id] ? '...' : 'Clasificar'}
+                        </button>
+                      )}
                       <Link
                         to={`/apuntes/${a.id}/editar`}
-                        className="px-3 py-1.5 rounded-lg border bg-white hover:bg-slate-50 text-slate-800"
+                        className="px-3 py-1.5 rounded-lg border bg-white hover:bg-slate-50 text-slate-800 text-sm"
                       >
                         ✏️ Editar
                       </Link>
                       <button
                         onClick={() => handleDelete(a.id)}
-                        className="px-3 py-1.5 rounded-lg border bg-white hover:bg-slate-50 text-rose-700"
+                        className="px-3 py-1.5 rounded-lg border bg-white hover:bg-slate-50 text-rose-700 text-sm"
                       >
                         🗑️ Borrar
                       </button>

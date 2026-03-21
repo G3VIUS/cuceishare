@@ -23,7 +23,7 @@ function authenticate(req, res, next) {
     };
     next();
   } catch (_e) {
-    return res.status(401).json({ error: 'Token inválido' });
+    return res.status(401).json({ error: `Token inválido: ${_e.message}` });
   }
 }
 

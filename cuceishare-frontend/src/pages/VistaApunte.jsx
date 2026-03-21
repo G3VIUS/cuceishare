@@ -59,23 +59,26 @@ const Skeleton = ({ className = '' }) =>
 /* ---------- Componente ---------- */
 /* ── Badge de clasificación IA ── */
 const BADGE_STYLES = {
-  'Excelente':  { bg: 'bg-emerald-100', text: 'text-emerald-800', border: 'border-emerald-300', icon: '🏆' },
-  'Incompleto': { bg: 'bg-amber-100',   text: 'text-amber-800',   border: 'border-amber-300',   icon: '⚠️' },
-  'Erróneo':    { bg: 'bg-rose-100',    text: 'text-rose-800',    border: 'border-rose-300',     icon: '❌' },
+  'Excelente':  { bg: 'bg-emerald-100', text: 'text-emerald-800', border: 'border-emerald-300' },
+  'Incompleto': { bg: 'bg-amber-100',   text: 'text-amber-800',   border: 'border-amber-300' },
+  'Erróneo':    { bg: 'bg-rose-100',    text: 'text-rose-800',    border: 'border-rose-300' },
 };
-function ClasificacionBadge({ resultado, confianza }) {
-  if (!resultado) {
+function ClasificacionBadge({ tags }) {
+  const ia = Array.isArray(tags)
+    ? tags.find(t => t && typeof t === 'object' && t.__ia__ === true)
+    : null;
+  if (!ia) {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border bg-slate-100 text-slate-500 text-xs">
-        🤖 Sin clasificación
+        Sin clasificación
       </span>
     );
   }
-  const style = BADGE_STYLES[resultado] || { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-300', icon: '🤖' };
-  const pct = confianza != null ? ` · ${Math.round(confianza * 100)}%` : '';
+  const style = BADGE_STYLES[ia.resultado] || { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-300' };
+  const pct = ia.confianza != null ? ` · ${Math.round(ia.confianza * 100)}%` : '';
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-semibold ${style.bg} ${style.text} ${style.border}`}>
-      {style.icon} {resultado}{pct}
+      {ia.resultado}{pct}
     </span>
   );
 }
@@ -98,8 +101,7 @@ export default function VistaApunte() {
   const [urlLoading, setUrlLoading] = useState(true);
   const [copied, setCopied] = useState(false);
 
-  // Clasificación IA
-  const [clasificacion, setClasificacion] = useState(undefined); // undefined=cargando, null=no existe, obj=datos
+  // Clasificación IA — extraída directo de item.tags cuando llega (sin request extra)
 
   // Para render de texto puro si CORS lo permite
   const [textPreview, setTextPreview] = useState('');
@@ -120,24 +122,6 @@ export default function VistaApunte() {
         setErr(msg);
       } finally {
         if (alive) setLoading(false);
-      }
-    })();
-    return () => { alive = false; };
-  }, [id, HEADERS]);
-
-  // 1b) Carga clasificación IA
-  useEffect(() => {
-    let alive = true;
-    setClasificacion(undefined);
-    (async () => {
-      try {
-        const { data } = await axios.get(`${API}/apuntes/${id}/clasificacion`, { headers: HEADERS });
-        if (!alive) return;
-        setClasificacion(data ?? null);
-      } catch (e) {
-        if (!alive) return;
-        // 404 = sin clasificación; otros errores = igual mostramos null
-        setClasificacion(null);
       }
     })();
     return () => { alive = false; };
@@ -319,19 +303,12 @@ export default function VistaApunte() {
             🧩 Bloque
           </Link>
         )}
-        {/* Badge IA: undefined = cargando, null/sin datos = sin clasificación, obj = resultado */}
-        {clasificacion === undefined ? (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border bg-slate-100 text-slate-400 text-xs animate-pulse">
-            🤖 …
-          </span>
-        ) : (
-          <ClasificacionBadge
-            resultado={clasificacion?.resultado ?? null}
-            confianza={clasificacion?.confianza ?? null}
-          />
-        )}
+        {/* Badge IA — extraído directo de item.tags */}
+        <ClasificacionBadge tags={item.tags} />
         <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 text-slate-700">
-          🏷️ {Array.isArray(item.tags) ? item.tags.join(', ') : (item.tags ?? 'sin tags')}
+          🏷️ {Array.isArray(item.tags)
+            ? item.tags.filter(t => typeof t === 'string').join(', ') || 'sin tags'
+            : (item.tags ?? 'sin tags')}
         </span>
         <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 text-slate-700">
           🧾 {item.file_mime || 'tipo desconocido'}
